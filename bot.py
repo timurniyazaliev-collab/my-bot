@@ -19,6 +19,10 @@ BUSINESS_CONTEXT_PATH = os.path.join(os.path.dirname(__file__), "business.md")
 with open(BUSINESS_CONTEXT_PATH, "r", encoding="utf-8") as f:
     BUSINESS_CONTEXT = f.read()
 
+ZHK_DUBAI_PATH = os.path.join(os.path.dirname(__file__), "zhk_dubai.md")
+with open(ZHK_DUBAI_PATH, "r", encoding="utf-8") as f:
+    ZHK_DUBAI_INFO = f.read()
+
 STYLE_GUIDE = """Формат ответа (обязательно):
 - Обычный текст, без markdown-разметки: никаких **, ##, `, |, символов
   таблиц. Заголовки — просто отдельной строкой с заглавной буквы.
@@ -31,6 +35,11 @@ STYLE_GUIDE = """Формат ответа (обязательно):
 MARKETER_SYSTEM = f"""Ты — маркетолог-аналитик агентства недвижимости S House Group (Бишкек).
 
 {BUSINESS_CONTEXT}
+
+Факты о проекте ЖК Dubai (используй их, если речь о нём — не выдумывай
+другие цифры и планировки):
+
+{ZHK_DUBAI_INFO}
 
 {STYLE_GUIDE}
 
@@ -45,6 +54,11 @@ CONTENT_SYSTEM = f"""Ты — контент-мейкер для Instagram аг�
 и нового проекта ЖК Dubai.
 
 {BUSINESS_CONTEXT}
+
+Факты о проекте ЖК Dubai (используй их в постах и сценариях — не
+выдумывай другие цифры, планировки, цену или сроки):
+
+{ZHK_DUBAI_INFO}
 
 {STYLE_GUIDE}
 
