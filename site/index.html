@@ -54,22 +54,22 @@
 
   <!-- HERO -->
   <section class="hero">
-    <div class="hero__bg" aria-hidden="true">
-      <svg class="hero__mountains" viewBox="0 0 1440 420" preserveAspectRatio="none" xmlns="http://www.w3.org/2000/svg">
-        <path d="M0 420 L0 260 L160 120 L260 220 L360 90 L470 240 L560 150 L680 260 L760 60 L880 240 L980 170 L1100 260 L1220 130 L1330 250 L1440 190 L1440 420 Z" fill="#1e4266" opacity="0.55"/>
-        <path d="M0 420 L0 320 L120 200 L230 300 L340 170 L430 290 L540 210 L640 320 L740 150 L860 310 L960 240 L1080 320 L1190 220 L1300 330 L1440 260 L1440 420 Z" fill="#14304A"/>
-      </svg>
-    </div>
-
     <div class="container hero__inner">
-      <span class="eyebrow eyebrow--light">Премиум-класс · Бишкек, ул. Малдыбаева 117</span>
-      <h1 class="hero__title">DUBAI — пространство,<br>где перед окнами горы,<br>а не соседние дома</h1>
-      <p class="hero__text">2,4 гектара, где большинство территории отдано не зданиям, а двору и зелени.
-        Архитектура, вдохновлённая современной эстетикой Дубая — среди новостроек Бишкека такой ещё не было.</p>
+      <div class="hero__col">
+        <span class="eyebrow eyebrow--light">Премиум-класс · Бишкек, ул. Малдыбаева 117</span>
+        <h1 class="hero__title">DUBAI — пространство,<br>где перед окнами горы,<br>а не соседние дома</h1>
+        <p class="hero__text">2,4 гектара, где большинство территории отдано не зданиям, а двору и зелени.
+          Архитектура, вдохновлённая современной эстетикой Дубая — среди новостроек Бишкека такой ещё не было.</p>
 
-      <div class="hero__cta">
-        <a href="#apartments" class="btn btn--sand">Смотреть планировки</a>
-        <a href="#contact" class="btn btn--outline-light">Оставить заявку</a>
+        <div class="hero__cta">
+          <a href="#apartments" class="btn btn--sand">Смотреть планировки</a>
+          <a href="#contact" class="btn btn--outline-light">Оставить заявку</a>
+        </div>
+      </div>
+
+      <div class="hero__photo">
+        <img src="images/zhk-dubai-exterior-mountains.jpg" alt="ЖК DUBAI на фоне гор" width="1000" height="707" loading="eager">
+        <span class="hero__photo-caption">Вид, ради которого всё это строится</span>
       </div>
 
       <div class="hero__stats">
@@ -92,6 +92,12 @@
       </div>
     </div>
   </section>
+
+  <!-- EXTERIOR BANNER -->
+  <figure class="photo-banner">
+    <img src="images/zhk-dubai-exterior-day.jpg" alt="Фасад ЖК DUBAI днём" loading="lazy" width="1000" height="707">
+    <figcaption class="container">Три блока по 23 этажа — облицовка натуральным камнем, панорамное остекление</figcaption>
+  </figure>
 
   <!-- USP -->
   <section class="section" id="about">
@@ -160,6 +166,10 @@
       <h2 class="section__title">Планировки на любой сценарий жизни</h2>
       <p class="section__lead">Площадь одних и тех же типов квартир немного растёт с высотой этажа. Точные планировки
         в PDF и наличие конкретных лотов уточняйте у отдела продаж.</p>
+
+      <figure class="photo-banner photo-banner--tall">
+        <img src="images/zhk-dubai-window-view.jpg" alt="Вид на горы из окна квартиры ЖК DUBAI на закате" loading="lazy" width="1000" height="707">
+      </figure>
 
       <div class="tabs" id="tabs">
         <div class="tabs__nav" role="tablist">
@@ -347,15 +357,20 @@
   <section class="section" id="gallery">
     <div class="container">
       <span class="eyebrow">Галерея</span>
-      <h2 class="section__title">Рендеры и фото стройки — на подходе</h2>
-      <p class="section__lead">Полная фотогалерея двора, лобби и фасадов появится по мере готовности материалов.
-        Актуальные кадры и ход строительства — в нашем Instagram.</p>
+      <h2 class="section__title">Двор DUBAI</h2>
+      <p class="section__lead">Визуализации мультифункционального двора — детской зоны и зоны отдыха. Рендеры
+        фасадов, лобби и фото хода строительства добавим по мере готовности — актуальные кадры также публикуем
+        в Instagram.</p>
 
-      <div class="grid grid--4 gallery">
-        <div class="gallery__item"><span>Фасады</span></div>
-        <div class="gallery__item"><span>Двор</span></div>
-        <div class="gallery__item"><span>Лобби</span></div>
-        <div class="gallery__item"><span>Ход строительства</span></div>
+      <div class="grid grid--2 gallery">
+        <figure class="gallery__item">
+          <img src="images/zhk-dubai-playground.jpg" alt="Детская площадка во дворе ЖК DUBAI" loading="lazy" width="1000" height="707">
+          <figcaption>Двор — детская зона</figcaption>
+        </figure>
+        <figure class="gallery__item">
+          <img src="images/zhk-dubai-courtyard.jpg" alt="Двор с беседками и озеленением вечером" loading="lazy" width="1000" height="707">
+          <figcaption>Двор — зона отдыха</figcaption>
+        </figure>
       </div>
 
       <a href="https://instagram.com/dubai__kg" target="_blank" rel="noopener" class="btn btn--outline">Смотреть в Instagram → @dubai__kg</a>
