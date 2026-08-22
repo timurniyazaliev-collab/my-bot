@@ -5,7 +5,7 @@ for v in ("HTTP_PROXY","HTTPS_PROXY","http_proxy","https_proxy","ALL_PROXY","all
 
 from dotenv import load_dotenv
 import anthropic
-from telegram import Update
+from telegram import BotCommand, ReplyKeyboardMarkup, Update
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
 
 load_dotenv()
@@ -68,6 +68,26 @@ CONTENT_SYSTEM = f"""Ты — контент-мейкер для Instagram аг�
 WEB_SEARCH_TOOL = {"type": "web_search_20260209", "name": "web_search", "max_uses": 10}
 TELEGRAM_MAX_LEN = 4096
 
+BOT_COMMANDS = [
+    BotCommand("news", "Новости и тренды рынка"),
+    BotCommand("competitors", "Что нового у конкурентов"),
+    BotCommand("mentions", "Упоминания бренда/ключевых слов"),
+    BotCommand("idea", "Свежие идеи для контента"),
+    BotCommand("post", "Готовый пост для соцсетей"),
+    BotCommand("reels", "Сценарий для рилса"),
+    BotCommand("reset", "Очистить историю диалога"),
+]
+
+MAIN_KEYBOARD = ReplyKeyboardMarkup(
+    [
+        ["/news", "/competitors"],
+        ["/mentions", "/idea"],
+        ["/post", "/reels"],
+        ["/reset"],
+    ],
+    resize_keyboard=True,
+)
+
 
 async def reply_long(update: Update, text: str):
     for i in range(0, len(text), TELEGRAM_MAX_LEN):
@@ -89,14 +109,10 @@ def ask_claude(system_prompt: str, user_prompt: str, use_search: bool = False) -
 async def start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "Привет! Я бот на Claude для S House Group.\n"
-        "Спрашивай что угодно, а ещё умею:\n\n"
-        "/news — новости и тренды рынка\n"
-        "/competitors — что нового у конкурентов\n"
-        "/mentions <слово> — упоминания в сети\n"
-        "/idea — свежие идеи для контента\n"
-        "/post <тема> — готовый пост для соцсетей\n"
-        "/reels <тема> — сценарий для рилса\n"
-        "/reset — очистить историю диалога"
+        "Спрашивай что угодно, а для остального нажимай кнопки внизу "
+        "(/post и /reels ещё попросят тему — просто допиши её текстом "
+        "после кнопки).",
+        reply_markup=MAIN_KEYBOARD,
     )
 
 
@@ -227,8 +243,12 @@ async def reels(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Не получилось написать сценарий. Попробуй ещё раз.")
 
 
+async def setup_commands(app):
+    await app.bot.set_my_commands(BOT_COMMANDS)
+
+
 def main():
-    app = ApplicationBuilder().token(os.environ["TELEGRAM_BOT_TOKEN"]).build()
+    app = ApplicationBuilder().token(os.environ["TELEGRAM_BOT_TOKEN"]).post_init(setup_commands).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("reset", reset))
     app.add_handler(CommandHandler("news", news))
