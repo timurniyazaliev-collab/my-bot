@@ -1,6 +1,8 @@
 
 .env
 
+owner_chat_id.txt
+
 venv/
 
 __pycache__/

@@ -1,4 +1,5 @@
 import os, logging
+from datetime import time as dt_time, timezone
 
 for v in ("HTTP_PROXY","HTTPS_PROXY","http_proxy","https_proxy","ALL_PROXY","all_proxy"):
     os.environ.pop(v, None)
@@ -15,13 +16,33 @@ log = logging.getLogger(__name__)
 claude = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
 history: dict[int, list[dict]] = {}
 
-BUSINESS_CONTEXT_PATH = os.path.join(os.path.dirname(__file__), "business.md")
-with open(BUSINESS_CONTEXT_PATH, "r", encoding="utf-8") as f:
-    BUSINESS_CONTEXT = f.read()
+BASE_DIR = os.path.dirname(__file__)
 
-ZHK_DUBAI_PATH = os.path.join(os.path.dirname(__file__), "zhk_dubai.md")
-with open(ZHK_DUBAI_PATH, "r", encoding="utf-8") as f:
-    ZHK_DUBAI_INFO = f.read()
+
+def read_file(name: str) -> str:
+    with open(os.path.join(BASE_DIR, name), "r", encoding="utf-8") as f:
+        return f.read()
+
+
+BUSINESS_CONTEXT = read_file("business.md")
+ZHK_DUBAI_INFO = read_file("zhk_dubai.md")
+SALES_SCRIPTS = read_file("sales_scripts.md")
+
+OWNER_CHAT_ID_PATH = os.path.join(BASE_DIR, "owner_chat_id.txt")
+
+
+def save_owner_chat_id(chat_id: int):
+    with open(OWNER_CHAT_ID_PATH, "w") as f:
+        f.write(str(chat_id))
+
+
+def load_owner_chat_id() -> int | None:
+    try:
+        with open(OWNER_CHAT_ID_PATH) as f:
+            return int(f.read().strip())
+    except (FileNotFoundError, ValueError):
+        return None
+
 
 STYLE_GUIDE = """Формат ответа (обязательно):
 - Обычный текст, без markdown-разметки: никаких **, ##, `, |, символов
@@ -29,19 +50,39 @@ STYLE_GUIDE = """Формат ответа (обязательно):
 - Списки — через "-" или "1.", без вложенных подпунктов.
 - Пиши грамотно, ясно, короткими абзацами, деловым языком без канцелярита.
 - Где это помогает понять мысль — добавь короткий конкретный пример
-  (цифру, фразу, мини-сценарий).
+  (цифру, фразу, мини-сценарий, расчёт).
 - Без лишних эмодзи и восклицательных знаков."""
 
-MARKETER_SYSTEM = f"""Ты — маркетолог-аналитик агентства недвижимости S House Group (Бишкек).
+ASSISTANT_ROLE = """Ты — личный ИИ-помощник Тимура: маркетолог и руководитель отдела
+продаж в агентстве недвижимости S House Group (Бишкек) и его проекте
+ЖК Dubai. Когда речь заходит о ЖК Dubai — это НАШ проект, ты знаешь про
+него всё из фактов ниже и говоришь о нём как о своём, а не как о чужом
+объекте.
+
+Ты уверенно разбираешься в оценке недвижимости (что влияет на цену м²,
+как сравнивать объекты, премиум-сегмент vs масс-маркет), и свободно
+работаешь с цифрами: конверсия лидов, юнит-экономика, окупаемость,
+расчёты по рассрочке и скидкам. Если тебя просят посчитать — считай
+явно, показывай ход расчёта, а не только итог."""
+
+CORE_CONTEXT = f"""{ASSISTANT_ROLE}
 
 {BUSINESS_CONTEXT}
 
-Факты о проекте ЖК Dubai (используй их, если речь о нём — не выдумывай
-другие цифры и планировки):
+Факты о проекте ЖК Dubai (используй точно, не выдумывай другие цифры,
+планировки, цену или сроки):
 
 {ZHK_DUBAI_INFO}
 
-{STYLE_GUIDE}
+{STYLE_GUIDE}"""
+
+CHAT_SYSTEM = f"""{CORE_CONTEXT}
+
+Это обычный разговорный режим: отвечай на любые вопросы — деловые и
+личные, — но всегда с учётом того, что ты часть команды S House Group.
+Коротко и по существу, разворачивай ответ только если вопрос сложный."""
+
+MARKETER_SYSTEM = f"""{CORE_CONTEXT}
 
 Используй веб-поиск, чтобы опираться на реальные, свежие данные, и
 указывай источник (сайт/дата) у каждого пункта. Веб-поиск видит обычные
@@ -50,20 +91,22 @@ MARKETER_SYSTEM = f"""Ты — маркетолог-аналитик агент�
 Если ничего не нашёл или не уверен — так и скажи, не выдумывай факты и
 цифры."""
 
-CONTENT_SYSTEM = f"""Ты — контент-мейкер для Instagram агентства недвижимости S House Group
-и нового проекта ЖК Dubai.
+CONTENT_SYSTEM = f"""{CORE_CONTEXT}
 
-{BUSINESS_CONTEXT}
+Ты также контент-мейкер для Instagram S House Group и ЖК Dubai. ЖК Dubai
+только начал вести Instagram, сайта ещё нет — контент должен цеплять
+внимание, вызывать доверие и подталкивать написать в директ."""
 
-Факты о проекте ЖК Dubai (используй их в постах и сценариях — не
-выдумывай другие цифры, планировки, цену или сроки):
+SALES_SYSTEM = f"""{CORE_CONTEXT}
 
-{ZHK_DUBAI_INFO}
+Скрипты продаж компании (используй как основу и адаптируй под ситуацию,
+которую тебе описали — не переписывай с нуля, если не просили):
 
-{STYLE_GUIDE}
+{SALES_SCRIPTS}
 
-ЖК Dubai только начал вести Instagram, сайта ещё нет — контент должен
-цеплять внимание, вызывать доверие и подталкивать написать в директ."""
+Помогай менеджерам по продажам: дорабатывай скрипты под конкретную
+ситуацию, отвечай на возражения клиентов, объясняй условия покупки
+понятным языком, которым можно сразу говорить с клиентом."""
 
 WEB_SEARCH_TOOL = {"type": "web_search_20260209", "name": "web_search", "max_uses": 10}
 TELEGRAM_MAX_LEN = 4096
@@ -75,6 +118,7 @@ BOT_COMMANDS = [
     BotCommand("idea", "Свежие идеи для контента"),
     BotCommand("post", "Готовый пост для соцсетей"),
     BotCommand("reels", "Сценарий для рилса"),
+    BotCommand("sales", "Скрипты продаж и возражения"),
     BotCommand("reset", "Очистить историю диалога"),
 ]
 
@@ -83,10 +127,12 @@ MAIN_KEYBOARD = ReplyKeyboardMarkup(
         ["/news", "/competitors"],
         ["/mentions", "/idea"],
         ["/post", "/reels"],
-        ["/reset"],
+        ["/sales", "/reset"],
     ],
     resize_keyboard=True,
 )
+
+DAILY_DIGEST_UTC_TIME = dt_time(hour=3, minute=0, tzinfo=timezone.utc)  # 09:00 Бишкек
 
 
 async def reply_long(update: Update, text: str):
@@ -107,11 +153,14 @@ def ask_claude(system_prompt: str, user_prompt: str, use_search: bool = False) -
 
 
 async def start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    save_owner_chat_id(update.effective_chat.id)
     await update.message.reply_text(
-        "Привет! Я бот на Claude для S House Group.\n"
+        "Привет! Я твой помощник на Claude — маркетолог и помощник "
+        "руководителя отдела продаж S House Group.\n"
         "Спрашивай что угодно, а для остального нажимай кнопки внизу "
-        "(/post и /reels ещё попросят тему — просто допиши её текстом "
-        "после кнопки).",
+        "(/post, /reels и /sales ещё попросят детали — просто допиши "
+        "их текстом после кнопки). Каждый день в 9:00 сам пришлю "
+        "сводку новостей рынка.",
         reply_markup=MAIN_KEYBOARD,
     )
 
@@ -127,8 +176,8 @@ async def chat(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await ctx.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
     try:
         resp = claude.messages.create(
-            model="claude-opus-4-7", max_tokens=1024,
-            system="Ты доброжелательный ассистент. Отвечай коротко и по существу на русском.",
+            model="claude-opus-5", max_tokens=1024,
+            system=CHAT_SYSTEM,
             messages=history[uid],
         )
         text = resp.content[0].text
@@ -243,8 +292,51 @@ async def reels(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Не получилось написать сценарий. Попробуй ещё раз.")
 
 
+async def sales(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    situation = " ".join(ctx.args) if ctx.args else None
+    await ctx.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
+    try:
+        if situation:
+            prompt = (
+                f"Ситуация от менеджера: {situation}. "
+                "Дай готовый ответ клиенту или конкретный совет, что "
+                "сказать, опираясь на наши скрипты продаж."
+            )
+        else:
+            prompt = (
+                "Покажи кратко три базовых скрипта продаж (входящий "
+                "звонок, обработка лида, исходящий звонок) — по 3-4 "
+                "шага на каждый, без воды."
+            )
+        text = ask_claude(SALES_SYSTEM, prompt)
+        await reply_long(update, text)
+    except Exception:
+        log.exception("sales error")
+        await update.message.reply_text("Не получилось собрать ответ. Попробуй ещё раз.")
+
+
+async def daily_news_digest(ctx: ContextTypes.DEFAULT_TYPE):
+    chat_id = load_owner_chat_id()
+    if chat_id is None:
+        return
+    try:
+        text = ask_claude(
+            MARKETER_SYSTEM,
+            "Найди самые свежие новости и тренды рынка недвижимости "
+            "Бишкека за последние сутки-двое: новостройки, цены, спрос, "
+            "новые проекты. Сделай короткую сводку по пунктам.",
+            use_search=True,
+        )
+        full_text = "Доброе утро! Сводка новостей рынка недвижимости:\n\n" + text
+        for i in range(0, len(full_text), TELEGRAM_MAX_LEN):
+            await ctx.bot.send_message(chat_id=chat_id, text=full_text[i:i + TELEGRAM_MAX_LEN])
+    except Exception:
+        log.exception("daily digest error")
+
+
 async def setup_commands(app):
     await app.bot.set_my_commands(BOT_COMMANDS)
+    app.job_queue.run_daily(daily_news_digest, time=DAILY_DIGEST_UTC_TIME)
 
 
 def main():
@@ -257,6 +349,7 @@ def main():
     app.add_handler(CommandHandler("idea", idea))
     app.add_handler(CommandHandler("post", post))
     app.add_handler(CommandHandler("reels", reels))
+    app.add_handler(CommandHandler("sales", sales))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, chat))
     log.info("Bot started")
     app.run_polling()
