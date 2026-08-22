@@ -19,17 +19,19 @@ html { scroll-behavior: smooth; }
 
 body {
   margin: 0;
-  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  font-family: 'Manrope', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   color: var(--text);
   background: var(--white);
   line-height: 1.55;
 }
 
 h1, h2, h3 {
-  font-family: 'Playfair Display', Georgia, serif;
+  font-family: 'Unbounded', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  font-weight: 600;
   margin: 0;
   color: var(--blue-deep);
-  line-height: 1.2;
+  line-height: 1.22;
+  letter-spacing: -0.01em;
 }
 
 p { margin: 0; }
@@ -93,7 +95,7 @@ button { font: inherit; cursor: pointer; }
   padding: 14px 24px; gap: 24px;
 }
 
-.logo { display: flex; align-items: center; gap: 10px; font-family: 'Playfair Display', serif; font-size: 22px; font-weight: 700; letter-spacing: 1px; color: var(--blue-deep); }
+.logo { display: flex; align-items: center; gap: 10px; font-family: 'Unbounded', sans-serif; font-size: 19px; font-weight: 700; letter-spacing: 1px; color: var(--blue-deep); }
 .logo--light { color: var(--sand); }
 
 .nav { display: flex; gap: 26px; }
@@ -155,7 +157,7 @@ button { font: inherit; cursor: pointer; }
   gap: 24px; padding-top: 36px; border-top: 1px solid rgba(20,48,74,.15);
 }
 .stat { display: flex; flex-direction: column; gap: 4px; }
-.stat__value { font-family: 'Playfair Display', serif; font-size: 26px; font-weight: 700; color: var(--blue-deep); }
+.stat__value { font-family: 'Unbounded', sans-serif; font-size: 23px; font-weight: 700; color: var(--blue-deep); }
 .stat__label { font-size: 13.5px; color: var(--text-muted); }
 
 /* ---------- Cards / USP ---------- */
@@ -193,7 +195,7 @@ button { font: inherit; cursor: pointer; }
 }
 .apt__figure { background: var(--sand-light); border-radius: 10px; padding: 24px; }
 .apt__info h3 { font-size: 24px; margin-bottom: 8px; }
-.apt__area { font-size: 20px; font-weight: 700; color: var(--blue-light); margin-bottom: 16px; font-family: 'Playfair Display', serif; }
+.apt__area { font-size: 18px; font-weight: 700; color: var(--blue-light); margin-bottom: 16px; font-family: 'Unbounded', sans-serif; }
 .apt__info ul li { position: relative; padding-left: 18px; color: var(--text-muted); font-size: 15px; margin-bottom: 8px; }
 .apt__info ul li::before { content: ''; position: absolute; left: 0; top: 9px; width: 6px; height: 6px; border-radius: 50%; background: var(--blue-light); }
 
@@ -224,7 +226,7 @@ button { font: inherit; cursor: pointer; }
   display: flex; align-items: flex-end; padding: 18px; position: relative; overflow: hidden;
 }
 .gallery__item::after { content: 'Скоро'; position: absolute; top: 16px; right: 16px; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; color: rgba(255,255,255,.8); background: rgba(0,0,0,.25); padding: 4px 10px; border-radius: 100px; }
-.gallery__item span { color: var(--white); font-weight: 600; font-family: 'Playfair Display', serif; font-size: 18px; }
+.gallery__item span { color: var(--white); font-weight: 600; font-family: 'Unbounded', sans-serif; font-size: 16px; }
 
 /* ---------- Price ---------- */
 .price__grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 20px; margin-top: 40px; }
@@ -232,7 +234,7 @@ button { font: inherit; cursor: pointer; }
   background: rgba(255,255,255,.06); border: 1px solid rgba(255,255,255,.15);
   border-radius: var(--radius); padding: 26px 22px;
 }
-.price__value { display: block; font-family: 'Playfair Display', serif; font-size: 26px; font-weight: 700; color: var(--sand); margin-bottom: 6px; }
+.price__value { display: block; font-family: 'Unbounded', sans-serif; font-size: 23px; font-weight: 700; color: var(--sand); margin-bottom: 6px; }
 .price__label { font-size: 13.5px; color: rgba(255,255,255,.72); }
 .price__disclaimer { margin-top: 28px; font-size: 13.5px; color: rgba(255,255,255,.55); max-width: 560px; }
 .price .btn--sand { margin-top: 28px; }
