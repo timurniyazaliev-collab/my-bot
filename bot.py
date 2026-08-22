@@ -19,25 +19,45 @@ BUSINESS_CONTEXT_PATH = os.path.join(os.path.dirname(__file__), "business.md")
 with open(BUSINESS_CONTEXT_PATH, "r", encoding="utf-8") as f:
     BUSINESS_CONTEXT = f.read()
 
+STYLE_GUIDE = """Формат ответа (обязательно):
+- Обычный текст, без markdown-разметки: никаких **, ##, `, |, символов
+  таблиц. Заголовки — просто отдельной строкой с заглавной буквы.
+- Списки — через "-" или "1.", без вложенных подпунктов.
+- Пиши грамотно, ясно, короткими абзацами, деловым языком без канцелярита.
+- Где это помогает понять мысль — добавь короткий конкретный пример
+  (цифру, фразу, мини-сценарий).
+- Без лишних эмодзи и восклицательных знаков."""
+
 MARKETER_SYSTEM = f"""Ты — маркетолог-аналитик агентства недвижимости S House Group (Бишкек).
 
 {BUSINESS_CONTEXT}
 
-Отвечай по-русски, по делу, структурированным списком. Используй веб-поиск,
-чтобы опираться на реальные, свежие данные, и указывай источник (сайт/дата)
-у каждого пункта. Если ничего не нашёл или не уверен — так и скажи, не
-выдумывай факты и цифры."""
+{STYLE_GUIDE}
+
+Используй веб-поиск, чтобы опираться на реальные, свежие данные, и
+указывай источник (сайт/дата) у каждого пункта. Веб-поиск видит обычные
+сайты и статьи, но не может зайти в Instagram, Facebook или Threads —
+соцсети закрыты от поисковиков, так и объясняй, если по ним нет данных.
+Если ничего не нашёл или не уверен — так и скажи, не выдумывай факты и
+цифры."""
 
 CONTENT_SYSTEM = f"""Ты — контент-мейкер для Instagram агентства недвижимости S House Group
 и нового проекта ЖК Dubai.
 
 {BUSINESS_CONTEXT}
 
-ЖК Dubai только начал вести Instagram, сайта ещё нет — контент должен
-цеплять внимание, вызывать доверие и подталкивать написать в директ.
-Пиши по-русски, без канцелярита."""
+{STYLE_GUIDE}
 
-WEB_SEARCH_TOOL = {"type": "web_search_20260209", "name": "web_search", "max_uses": 5}
+ЖК Dubai только начал вести Instagram, сайта ещё нет — контент должен
+цеплять внимание, вызывать доверие и подталкивать написать в директ."""
+
+WEB_SEARCH_TOOL = {"type": "web_search_20260209", "name": "web_search", "max_uses": 10}
+TELEGRAM_MAX_LEN = 4096
+
+
+async def reply_long(update: Update, text: str):
+    for i in range(0, len(text), TELEGRAM_MAX_LEN):
+        await update.message.reply_text(text[i:i + TELEGRAM_MAX_LEN])
 
 
 def ask_claude(system_prompt: str, user_prompt: str, use_search: bool = False) -> str:
@@ -100,7 +120,7 @@ async def news(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             "проекты. Сделай короткую сводку по пунктам.",
             use_search=True,
         )
-        await update.message.reply_text(text)
+        await reply_long(update, text)
     except Exception:
         log.exception("news error")
         await update.message.reply_text("Не получилось собрать новости. Попробуй ещё раз.")
@@ -117,7 +137,7 @@ async def competitors(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             "Сделай короткую сводку по компаниям, которые удалось найти.",
             use_search=True,
         )
-        await update.message.reply_text(text)
+        await reply_long(update, text)
     except Exception:
         log.exception("competitors error")
         await update.message.reply_text("Не получилось собрать данные по конкурентам. Попробуй ещё раз.")
@@ -134,7 +154,7 @@ async def mentions(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             "Если ничего не нашлось — прямо скажи об этом.",
             use_search=True,
         )
-        await update.message.reply_text(text)
+        await reply_long(update, text)
     except Exception:
         log.exception("mentions error")
         await update.message.reply_text("Не получилось проверить упоминания. Попробуй ещё раз.")
@@ -149,7 +169,7 @@ async def idea(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             "для ЖК Dubai и S House Group. По каждой идее — одна строка "
             "темы и одна строка, почему она может сработать.",
         )
-        await update.message.reply_text(text)
+        await reply_long(update, text)
     except Exception:
         log.exception("idea error")
         await update.message.reply_text("Не получилось придумать идеи. Попробуй ещё раз.")
@@ -168,7 +188,7 @@ async def post(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             "800-1200 знаков, цепляющее начало, призыв написать в директ "
             "в конце. Также предложи 3 варианта заголовка на выбор.",
         )
-        await update.message.reply_text(text)
+        await reply_long(update, text)
     except Exception:
         log.exception("post error")
         await update.message.reply_text("Не получилось написать пост. Попробуй ещё раз.")
@@ -187,7 +207,7 @@ async def reels(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             "По кадрам: что происходит в кадре, что говорит/пишет текстом, "
             "какая музыка/настроение. В конце — призыв к действию.",
         )
-        await update.message.reply_text(text)
+        await reply_long(update, text)
     except Exception:
         log.exception("reels error")
         await update.message.reply_text("Не получилось написать сценарий. Попробуй ещё раз.")
