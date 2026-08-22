@@ -15,6 +15,7 @@ log = logging.getLogger(__name__)
 
 claude = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
 history: dict[int, list[dict]] = {}
+user_mode: dict[int, str] = {}
 
 BASE_DIR = os.path.dirname(__file__)
 
@@ -108,6 +109,14 @@ SALES_SYSTEM = f"""{CORE_CONTEXT}
 ситуацию, отвечай на возражения клиентов, объясняй условия покупки
 понятным языком, которым можно сразу говорить с клиентом."""
 
+SYSTEM_PROMPTS = {
+    "chat": CHAT_SYSTEM,
+    "marketer": MARKETER_SYSTEM,
+    "content": CONTENT_SYSTEM,
+    "sales": SALES_SYSTEM,
+}
+SEARCH_MODES = {"marketer"}
+
 WEB_SEARCH_TOOL = {"type": "web_search_20260209", "name": "web_search", "max_uses": 10}
 TELEGRAM_MAX_LEN = 4096
 
@@ -140,16 +149,31 @@ async def reply_long(update: Update, text: str):
         await update.message.reply_text(text[i:i + TELEGRAM_MAX_LEN])
 
 
-def ask_claude(system_prompt: str, user_prompt: str, use_search: bool = False) -> str:
+def ask_claude(system_prompt: str, messages: list[dict], use_search: bool = False) -> str:
     response = claude.messages.create(
         model="claude-opus-5",
         max_tokens=2048,
         system=system_prompt,
         tools=[WEB_SEARCH_TOOL] if use_search else [],
-        messages=[{"role": "user", "content": user_prompt}],
+        messages=messages,
     )
     text = "\n\n".join(b.text for b in response.content if b.type == "text")
     return text or "Не получилось сформировать ответ, попробуй переформулировать."
+
+
+async def run_command(update: Update, ctx: ContextTypes.DEFAULT_TYPE, mode: str, prompt: str, error_msg: str):
+    uid = update.effective_user.id
+    await ctx.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
+    try:
+        history.setdefault(uid, []).append({"role": "user", "content": prompt})
+        text = ask_claude(SYSTEM_PROMPTS[mode], history[uid], use_search=mode in SEARCH_MODES)
+        history[uid].append({"role": "assistant", "content": text})
+        history[uid] = history[uid][-20:]
+        user_mode[uid] = mode
+        await reply_long(update, text)
+    except Exception:
+        log.exception(f"{mode} command error")
+        await update.message.reply_text(error_msg)
 
 
 async def start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -159,99 +183,67 @@ async def start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         "руководителя отдела продаж S House Group.\n"
         "Спрашивай что угодно, а для остального нажимай кнопки внизу "
         "(/post, /reels и /sales ещё попросят детали — просто допиши "
-        "их текстом после кнопки). Каждый день в 9:00 сам пришлю "
+        "их текстом после кнопки). После команды можно продолжать "
+        "разговор обычным текстом — помню контекст, пока не позовёшь "
+        "/reset или другую команду. Каждый день в 9:00 сам пришлю "
         "сводку новостей рынка.",
         reply_markup=MAIN_KEYBOARD,
     )
 
 
 async def reset(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    history.pop(update.effective_user.id, None)
-    await update.message.reply_text("История очищена.")
+    uid = update.effective_user.id
+    history.pop(uid, None)
+    user_mode.pop(uid, None)
+    await update.message.reply_text("История очищена, снова обычный режим.")
 
 
 async def chat(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
-    history.setdefault(uid, []).append({"role": "user", "content": update.message.text})
-    await ctx.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
-    try:
-        resp = claude.messages.create(
-            model="claude-opus-5", max_tokens=1024,
-            system=CHAT_SYSTEM,
-            messages=history[uid],
-        )
-        text = resp.content[0].text
-        history[uid].append({"role": "assistant", "content": text})
-        history[uid] = history[uid][-20:]
-        await update.message.reply_text(text)
-    except Exception:
-        log.exception("error")
-        await update.message.reply_text("Ошибка. Попробуй ещё раз.")
+    mode = user_mode.get(uid, "chat")
+    await run_command(update, ctx, mode, update.message.text, "Ошибка. Попробуй ещё раз.")
 
 
 async def news(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    await ctx.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
-    try:
-        text = ask_claude(
-            MARKETER_SYSTEM,
-            "Найди самые свежие новости и тренды рынка недвижимости Бишкека "
-            "за последние 1-2 недели: новостройки, цены, спрос, новые "
-            "проекты. Сделай короткую сводку по пунктам.",
-            use_search=True,
-        )
-        await reply_long(update, text)
-    except Exception:
-        log.exception("news error")
-        await update.message.reply_text("Не получилось собрать новости. Попробуй ещё раз.")
+    await run_command(
+        update, ctx, "marketer",
+        "Найди самые свежие новости и тренды рынка недвижимости Бишкека "
+        "за последние 1-2 недели: новостройки, цены, спрос, новые "
+        "проекты. Сделай короткую сводку по пунктам.",
+        "Не получилось собрать новости. Попробуй ещё раз.",
+    )
 
 
 async def competitors(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    await ctx.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
-    try:
-        text = ask_claude(
-            MARKETER_SYSTEM,
-            "Найди, что сейчас публикуют и предлагают строительные компании "
-            "премиум-сегмента в Бишкеке (районы выше Магистрали, ближе к "
-            "горам): новые проекты, акции, цены, активность в соцсетях. "
-            "Сделай короткую сводку по компаниям, которые удалось найти.",
-            use_search=True,
-        )
-        await reply_long(update, text)
-    except Exception:
-        log.exception("competitors error")
-        await update.message.reply_text("Не получилось собрать данные по конкурентам. Попробуй ещё раз.")
+    await run_command(
+        update, ctx, "marketer",
+        "Найди, что сейчас публикуют и предлагают строительные компании "
+        "премиум-сегмента в Бишкеке (районы выше Магистрали, ближе к "
+        "горам): новые проекты, акции, цены, активность в соцсетях. "
+        "Сделай короткую сводку по компаниям, которые удалось найти.",
+        "Не получилось собрать данные по конкурентам. Попробуй ещё раз.",
+    )
 
 
 async def mentions(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     query = " ".join(ctx.args) if ctx.args else "S House Group, ЖК Dubai"
-    await ctx.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
-    try:
-        text = ask_claude(
-            MARKETER_SYSTEM,
-            f"Найди в интернете свежие упоминания: {query}. "
-            "Если что-то нашлось — укажи источник и краткую суть. "
-            "Если ничего не нашлось — прямо скажи об этом.",
-            use_search=True,
-        )
-        await reply_long(update, text)
-    except Exception:
-        log.exception("mentions error")
-        await update.message.reply_text("Не получилось проверить упоминания. Попробуй ещё раз.")
+    await run_command(
+        update, ctx, "marketer",
+        f"Найди в интернете свежие упоминания: {query}. "
+        "Если что-то нашлось — укажи источник и краткую суть. "
+        "Если ничего не нашлось — прямо скажи об этом.",
+        "Не получилось проверить упоминания. Попробуй ещё раз.",
+    )
 
 
 async def idea(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    await ctx.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
-    try:
-        text = ask_claude(
-            CONTENT_SYSTEM,
-            "Накидай 5 свежих идей для постов в Instagram на эту неделю "
-            "для ЖК Dubai и S House Group. По каждой идее — одна строка "
-            "темы и одна строка, почему она может сработать.",
-        )
-        await reply_long(update, text)
-    except Exception:
-        log.exception("idea error")
-        await update.message.reply_text("Не получилось придумать идеи. Попробуй ещё раз.")
+    await run_command(
+        update, ctx, "content",
+        "Накидай 5 свежих идей для постов в Instagram на эту неделю "
+        "для ЖК Dubai и S House Group. По каждой идее — одна строка "
+        "темы и одна строка, почему она может сработать.",
+        "Не получилось придумать идеи. Попробуй ещё раз.",
+    )
 
 
 async def post(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -259,18 +251,13 @@ async def post(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Укажи тему, например: /post скидка на квартиры с котлована")
         return
     topic = " ".join(ctx.args)
-    await ctx.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
-    try:
-        text = ask_claude(
-            CONTENT_SYSTEM,
-            f"Напиши готовый пост для Instagram на тему: {topic}. "
-            "800-1200 знаков, цепляющее начало, призыв написать в директ "
-            "в конце. Также предложи 3 варианта заголовка на выбор.",
-        )
-        await reply_long(update, text)
-    except Exception:
-        log.exception("post error")
-        await update.message.reply_text("Не получилось написать пост. Попробуй ещё раз.")
+    await run_command(
+        update, ctx, "content",
+        f"Напиши готовый пост для Instagram на тему: {topic}. "
+        "800-1200 знаков, цепляющее начало, призыв написать в директ "
+        "в конце. Также предложи 3 варианта заголовка на выбор.",
+        "Не получилось написать пост. Попробуй ещё раз.",
+    )
 
 
 async def reels(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -278,41 +265,29 @@ async def reels(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Укажи тему, например: /reels обзор ЖК Dubai с высоты")
         return
     topic = " ".join(ctx.args)
-    await ctx.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
-    try:
-        text = ask_claude(
-            CONTENT_SYSTEM,
-            f"Напиши короткий сценарий рилса (30-45 секунд) на тему: {topic}. "
-            "По кадрам: что происходит в кадре, что говорит/пишет текстом, "
-            "какая музыка/настроение. В конце — призыв к действию.",
-        )
-        await reply_long(update, text)
-    except Exception:
-        log.exception("reels error")
-        await update.message.reply_text("Не получилось написать сценарий. Попробуй ещё раз.")
+    await run_command(
+        update, ctx, "content",
+        f"Напиши короткий сценарий рилса (30-45 секунд) на тему: {topic}. "
+        "По кадрам: что происходит в кадре, что говорит/пишет текстом, "
+        "какая музыка/настроение. В конце — призыв к действию.",
+        "Не получилось написать сценарий. Попробуй ещё раз.",
+    )
 
 
 async def sales(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    situation = " ".join(ctx.args) if ctx.args else None
-    await ctx.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
-    try:
-        if situation:
-            prompt = (
-                f"Ситуация от менеджера: {situation}. "
-                "Дай готовый ответ клиенту или конкретный совет, что "
-                "сказать, опираясь на наши скрипты продаж."
-            )
-        else:
-            prompt = (
-                "Покажи кратко три базовых скрипта продаж (входящий "
-                "звонок, обработка лида, исходящий звонок) — по 3-4 "
-                "шага на каждый, без воды."
-            )
-        text = ask_claude(SALES_SYSTEM, prompt)
-        await reply_long(update, text)
-    except Exception:
-        log.exception("sales error")
-        await update.message.reply_text("Не получилось собрать ответ. Попробуй ещё раз.")
+    if ctx.args:
+        prompt = (
+            f"Ситуация от менеджера: {' '.join(ctx.args)}. "
+            "Дай готовый ответ клиенту или конкретный совет, что "
+            "сказать, опираясь на наши скрипты продаж."
+        )
+    else:
+        prompt = (
+            "Покажи кратко три базовых скрипта продаж (входящий "
+            "звонок, обработка лида, исходящий звонок) — по 3-4 "
+            "шага на каждый, без воды."
+        )
+    await run_command(update, ctx, "sales", prompt, "Не получилось собрать ответ. Попробуй ещё раз.")
 
 
 async def daily_news_digest(ctx: ContextTypes.DEFAULT_TYPE):
@@ -320,13 +295,12 @@ async def daily_news_digest(ctx: ContextTypes.DEFAULT_TYPE):
     if chat_id is None:
         return
     try:
-        text = ask_claude(
-            MARKETER_SYSTEM,
+        prompt = (
             "Найди самые свежие новости и тренды рынка недвижимости "
             "Бишкека за последние сутки-двое: новостройки, цены, спрос, "
-            "новые проекты. Сделай короткую сводку по пунктам.",
-            use_search=True,
+            "новые проекты. Сделай короткую сводку по пунктам."
         )
+        text = ask_claude(MARKETER_SYSTEM, [{"role": "user", "content": prompt}], use_search=True)
         full_text = "Доброе утро! Сводка новостей рынка недвижимости:\n\n" + text
         for i in range(0, len(full_text), TELEGRAM_MAX_LEN):
             await ctx.bot.send_message(chat_id=chat_id, text=full_text[i:i + TELEGRAM_MAX_LEN])
