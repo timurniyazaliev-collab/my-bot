@@ -9,6 +9,8 @@ import anthropic
 from telegram import BotCommand, ReplyKeyboardMarkup, Update
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
 
+import wb_sync
+
 load_dotenv()
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 log = logging.getLogger(__name__)
@@ -128,6 +130,7 @@ BOT_COMMANDS = [
     BotCommand("post", "Готовый пост для соцсетей"),
     BotCommand("reels", "Сценарий для рилса"),
     BotCommand("sales", "Скрипты продаж и возражения"),
+    BotCommand("wb_sync", "Синхронизировать отчёты WB с Google Таблицами"),
     BotCommand("reset", "Очистить историю диалога"),
 ]
 
@@ -137,11 +140,13 @@ MAIN_KEYBOARD = ReplyKeyboardMarkup(
         ["/mentions", "/idea"],
         ["/post", "/reels"],
         ["/sales", "/reset"],
+        ["/wb_sync"],
     ],
     resize_keyboard=True,
 )
 
 DAILY_DIGEST_UTC_TIME = dt_time(hour=3, minute=0, tzinfo=timezone.utc)  # 09:00 Бишкек
+WB_SYNC_INTERVAL_HOURS = int(os.environ.get("WB_SYNC_INTERVAL_HOURS", "3"))
 
 
 async def reply_long(update: Update, text: str):
@@ -290,6 +295,37 @@ async def sales(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await run_command(update, ctx, "sales", prompt, "Не получилось собрать ответ. Попробуй ещё раз.")
 
 
+async def wb_sync_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    await ctx.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
+    await update.message.reply_text("Начинаю синхронизацию с WB, это может занять минуту...")
+    try:
+        summary = wb_sync.sync_all()
+        await update.message.reply_text("Готово:\n\n" + summary)
+    except KeyError as e:
+        await update.message.reply_text(
+            f"Не настроена переменная окружения {e} в .env на сервере. "
+            "Нужны WB_API_TOKEN, GOOGLE_SHEET_ID и файл google_service_account.json."
+        )
+    except Exception:
+        log.exception("wb_sync command error")
+        await update.message.reply_text("Не получилось синхронизировать данные с WB. Попробуй ещё раз позже.")
+
+
+async def wb_scheduled_sync(ctx: ContextTypes.DEFAULT_TYPE):
+    chat_id = load_owner_chat_id()
+    try:
+        wb_sync.sync_all()
+    except KeyError:
+        return
+    except Exception:
+        log.exception("scheduled wb sync error")
+        if chat_id:
+            await ctx.bot.send_message(
+                chat_id=chat_id,
+                text="Не получилось синхронизировать данные WB → Google Таблицы. Попробую ещё раз позже.",
+            )
+
+
 async def daily_news_digest(ctx: ContextTypes.DEFAULT_TYPE):
     chat_id = load_owner_chat_id()
     if chat_id is None:
@@ -311,6 +347,7 @@ async def daily_news_digest(ctx: ContextTypes.DEFAULT_TYPE):
 async def setup_commands(app):
     await app.bot.set_my_commands(BOT_COMMANDS)
     app.job_queue.run_daily(daily_news_digest, time=DAILY_DIGEST_UTC_TIME)
+    app.job_queue.run_repeating(wb_scheduled_sync, interval=WB_SYNC_INTERVAL_HOURS * 3600, first=60)
 
 
 def main():
@@ -324,6 +361,7 @@ def main():
     app.add_handler(CommandHandler("post", post))
     app.add_handler(CommandHandler("reels", reels))
     app.add_handler(CommandHandler("sales", sales))
+    app.add_handler(CommandHandler("wb_sync", wb_sync_cmd))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, chat))
     log.info("Bot started")
     app.run_polling()
