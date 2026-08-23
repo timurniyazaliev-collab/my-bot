@@ -1,3 +1,4 @@
+import asyncio
 import os, logging
 from datetime import time as dt_time, timezone
 
@@ -299,7 +300,7 @@ async def wb_sync_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await ctx.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
     await update.message.reply_text("Обновляю сводный отчёт, это может занять минуту...")
     try:
-        summary = wb_sync.sync_svodny()
+        summary = await asyncio.to_thread(wb_sync.sync_svodny)
         await update.message.reply_text("Готово: " + summary)
     except KeyError as e:
         await update.message.reply_text(
@@ -314,7 +315,7 @@ async def wb_sync_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 async def wb_scheduled_sync(ctx: ContextTypes.DEFAULT_TYPE):
     chat_id = load_owner_chat_id()
     try:
-        wb_sync.sync_svodny()
+        await asyncio.to_thread(wb_sync.sync_svodny)
     except KeyError:
         return
     except Exception:
