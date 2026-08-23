@@ -8,8 +8,9 @@ log = logging.getLogger(__name__)
 
 WB_STATS_BASE = "https://statistics-api.wildberries.ru/api"
 TIMEOUT = 60
-MAX_RETRIES = 3
-DEFAULT_RETRY_WAIT = 65  # WB's statistics endpoints allow ~1 request/minute
+MAX_RETRIES = 6
+DEFAULT_RETRY_WAIT = 65  # WB's statistics endpoints allow ~1 request/minute per seller account,
+# shared with any other service (e.g. MPSTAT) polling the same account
 
 
 def _headers() -> dict:
