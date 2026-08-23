@@ -1,6 +1,8 @@
 import datetime
 import logging
 import os
+import threading
+import time
 from collections import defaultdict
 
 import gspread
@@ -9,6 +11,8 @@ import sheets_sync
 import wb_api
 
 log = logging.getLogger(__name__)
+
+_sync_lock = threading.Lock()
 
 MONTH_NAMES_RU = {
     1: "январь", 2: "февраль", 3: "март", 4: "апрель",
@@ -37,6 +41,7 @@ def _aggregate_orders_and_sales(date_from: str) -> dict:
         day["order_sum"] += o.get("priceWithDisc") or 0
         day["order_qty"] += 1
 
+    time.sleep(2)  # be gentle with WB's per-endpoint rate limit
     for s in wb_api.get_sales(date_from):
         sale_id = s.get("saleID") or ""
         sign = 1 if sale_id.startswith("S") else -1 if sale_id.startswith("R") else 0
@@ -61,6 +66,15 @@ def _aggregate_finance(date_from: str, date_to: str) -> dict:
 
 
 def sync_svodny() -> str:
+    if not _sync_lock.acquire(blocking=False):
+        return "Синхронизация уже выполняется — подожди, пока закончится текущая."
+    try:
+        return _sync_svodny()
+    finally:
+        _sync_lock.release()
+
+
+def _sync_svodny() -> str:
     today = datetime.date.today()
     date_from = (today - datetime.timedelta(days=SYNC_DAYS_BACK)).isoformat()
 
@@ -72,6 +86,7 @@ def sync_svodny() -> str:
         return f"Не нашёл вкладку «{tab_title}» в таблице — ничего не менял."
 
     daily = _aggregate_orders_and_sales(date_from)
+    time.sleep(2)
     finance = _aggregate_finance(date_from, today.isoformat())
 
     updates = []
