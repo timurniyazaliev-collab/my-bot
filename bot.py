@@ -347,7 +347,7 @@ async def daily_news_digest(ctx: ContextTypes.DEFAULT_TYPE):
 async def setup_commands(app):
     await app.bot.set_my_commands(BOT_COMMANDS)
     app.job_queue.run_daily(daily_news_digest, time=DAILY_DIGEST_UTC_TIME)
-    app.job_queue.run_repeating(wb_scheduled_sync, interval=WB_SYNC_INTERVAL_HOURS * 3600, first=60)
+    app.job_queue.run_repeating(wb_scheduled_sync, interval=WB_SYNC_INTERVAL_HOURS * 3600, first=300)
 
 
 def main():
