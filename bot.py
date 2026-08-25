@@ -158,6 +158,12 @@ async def reply_long(update: Update, text: str):
         await update.message.reply_text(text[i:i + TELEGRAM_MAX_LEN])
 
 
+async def reply_table(update: Update, table: str):
+    chunk_size = TELEGRAM_MAX_LEN - 8  # leave room for the ```\n ... \n``` fence
+    for i in range(0, len(table), chunk_size):
+        await update.message.reply_text(f"```\n{table[i:i + chunk_size]}\n```", parse_mode="Markdown")
+
+
 def ask_claude(system_prompt: str, messages: list[dict], use_search: bool = False) -> str:
     response = claude.messages.create(
         model="claude-opus-5",
@@ -311,8 +317,9 @@ async def wb_preview_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await ctx.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
     await update.message.reply_text("Считаю черновик по неделе, это может занять минуту...")
     try:
-        summary = await asyncio.to_thread(wb_sync.preview_week)
-        await reply_long(update, summary)
+        table, note = await asyncio.to_thread(wb_sync.preview_week)
+        await reply_table(update, table)
+        await update.message.reply_text(note)
     except KeyError as e:
         await update.message.reply_text(
             f"Не настроена переменная окружения {e} в .env на сервере. "
@@ -335,7 +342,10 @@ async def wb_report_document(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         await tg_file.download_to_drive(path)
         by_date = await asyncio.to_thread(wb_report_file.parse_summary_report, path)
         last_wb_report[uid] = by_date
-        await reply_long(update, wb_report_file.format_preview(by_date))
+        table, note = wb_report_file.format_preview(by_date)
+        if table:
+            await reply_table(update, table)
+        await update.message.reply_text(note)
     except Exception:
         log.exception("wb_report_document error")
         await update.message.reply_text("Не получилось разобрать файл. Проверь, что это выгрузка «Сводного по продавцу», и попробуй ещё раз.")
