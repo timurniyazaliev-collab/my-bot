@@ -1,4 +1,3 @@
-import asyncio
 import os, logging
 from datetime import time as dt_time, timezone
 
@@ -9,8 +8,6 @@ from dotenv import load_dotenv
 import anthropic
 from telegram import BotCommand, ReplyKeyboardMarkup, Update
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
-
-import wb_sync
 
 load_dotenv()
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
@@ -147,7 +144,6 @@ MAIN_KEYBOARD = ReplyKeyboardMarkup(
 )
 
 DAILY_DIGEST_UTC_TIME = dt_time(hour=3, minute=0, tzinfo=timezone.utc)  # 09:00 Бишкек
-WB_SYNC_INTERVAL_HOURS = int(os.environ.get("WB_SYNC_INTERVAL_HOURS", "3"))
 
 
 async def reply_long(update: Update, text: str):
@@ -297,34 +293,10 @@ async def sales(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
 
 async def wb_sync_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    await ctx.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
-    await update.message.reply_text("Обновляю сводный отчёт, это может занять минуту...")
-    try:
-        summary = await asyncio.to_thread(wb_sync.sync_svodny)
-        await update.message.reply_text("Готово: " + summary)
-    except KeyError as e:
-        await update.message.reply_text(
-            f"Не настроена переменная окружения {e} в .env на сервере. "
-            "Нужны WB_API_TOKEN, GOOGLE_SHEET_ID и файл google_service_account.json."
-        )
-    except Exception:
-        log.exception("wb_sync command error")
-        await update.message.reply_text("Не получилось синхронизировать данные с WB. Попробуй ещё раз позже.")
-
-
-async def wb_scheduled_sync(ctx: ContextTypes.DEFAULT_TYPE):
-    chat_id = load_owner_chat_id()
-    try:
-        await asyncio.to_thread(wb_sync.sync_svodny)
-    except KeyError:
-        return
-    except Exception:
-        log.exception("scheduled wb sync error")
-        if chat_id:
-            await ctx.bot.send_message(
-                chat_id=chat_id,
-                text="Не получилось синхронизировать сводный отчёт WB. Попробую ещё раз позже.",
-            )
+    await update.message.reply_text(
+        "Синхронизация WB отключена — она затирала нулями реальные цифры в таблице, "
+        "когда не могла получить данные от WB. Переделываю, чтобы такого больше не было."
+    )
 
 
 async def daily_news_digest(ctx: ContextTypes.DEFAULT_TYPE):
@@ -348,7 +320,6 @@ async def daily_news_digest(ctx: ContextTypes.DEFAULT_TYPE):
 async def setup_commands(app):
     await app.bot.set_my_commands(BOT_COMMANDS)
     app.job_queue.run_daily(daily_news_digest, time=DAILY_DIGEST_UTC_TIME)
-    app.job_queue.run_repeating(wb_scheduled_sync, interval=WB_SYNC_INTERVAL_HOURS * 3600, first=300)
 
 
 def main():
