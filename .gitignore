@@ -5,6 +5,8 @@ owner_chat_id.txt
 
 google_service_account.json
 
+wb_report_*.xlsx
+
 venv/
 
 __pycache__/

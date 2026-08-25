@@ -10,6 +10,7 @@ import anthropic
 from telegram import BotCommand, ReplyKeyboardMarkup, Update
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
 
+import wb_report_file
 import wb_sync
 
 load_dotenv()
@@ -18,6 +19,7 @@ log = logging.getLogger(__name__)
 
 claude = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
 history: dict[int, list[dict]] = {}
+last_wb_report: dict[int, dict] = {}
 user_mode: dict[int, str] = {}
 
 BASE_DIR = os.path.dirname(__file__)
@@ -132,6 +134,7 @@ BOT_COMMANDS = [
     BotCommand("reels", "Сценарий для рилса"),
     BotCommand("sales", "Скрипты продаж и возражения"),
     BotCommand("wb_preview", "Черновик сводного отчёта WB за неделю (только в чат)"),
+    BotCommand("wb_apply", "Записать в таблицу цифры из последнего файла WB"),
     BotCommand("wb_sync", "Синхронизировать отчёты WB с Google Таблицами"),
     BotCommand("reset", "Очистить историю диалога"),
 ]
@@ -142,7 +145,7 @@ MAIN_KEYBOARD = ReplyKeyboardMarkup(
         ["/mentions", "/idea"],
         ["/post", "/reels"],
         ["/sales", "/reset"],
-        ["/wb_preview", "/wb_sync"],
+        ["/wb_preview", "/wb_apply"],
     ],
     resize_keyboard=True,
 )
@@ -320,6 +323,44 @@ async def wb_preview_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Не получилось посчитать черновик. Попробуй ещё раз позже.")
 
 
+async def wb_report_document(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    doc = update.message.document
+    if not doc.file_name.lower().endswith(".xlsx"):
+        return
+    uid = update.effective_user.id
+    await ctx.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
+    try:
+        tg_file = await ctx.bot.get_file(doc.file_id)
+        path = os.path.join(BASE_DIR, f"wb_report_{uid}.xlsx")
+        await tg_file.download_to_drive(path)
+        by_date = await asyncio.to_thread(wb_report_file.parse_summary_report, path)
+        last_wb_report[uid] = by_date
+        await reply_long(update, wb_report_file.format_preview(by_date))
+    except Exception:
+        log.exception("wb_report_document error")
+        await update.message.reply_text("Не получилось разобрать файл. Проверь, что это выгрузка «Сводного по продавцу», и попробуй ещё раз.")
+
+
+async def wb_apply_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    uid = update.effective_user.id
+    by_date = last_wb_report.get(uid)
+    if not by_date:
+        await update.message.reply_text("Сначала пришли файл выгрузки «Сводного по продавцу» (.xlsx).")
+        return
+    await update.message.reply_text("Записываю в таблицу...")
+    try:
+        summary = await asyncio.to_thread(wb_sync.apply_report_file, by_date)
+        await update.message.reply_text("Готово:\n\n" + summary)
+    except KeyError as e:
+        await update.message.reply_text(
+            f"Не настроена переменная окружения {e} в .env на сервере. "
+            "Нужны GOOGLE_SHEET_ID и файл google_service_account.json."
+        )
+    except Exception:
+        log.exception("wb_apply command error")
+        await update.message.reply_text("Не получилось записать в таблицу. Попробуй ещё раз позже.")
+
+
 async def daily_news_digest(ctx: ContextTypes.DEFAULT_TYPE):
     chat_id = load_owner_chat_id()
     if chat_id is None:
@@ -356,6 +397,8 @@ def main():
     app.add_handler(CommandHandler("sales", sales))
     app.add_handler(CommandHandler("wb_sync", wb_sync_cmd))
     app.add_handler(CommandHandler("wb_preview", wb_preview_cmd))
+    app.add_handler(CommandHandler("wb_apply", wb_apply_cmd))
+    app.add_handler(MessageHandler(filters.Document.ALL, wb_report_document))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, chat))
     log.info("Bot started")
     app.run_polling()

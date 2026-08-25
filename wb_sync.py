@@ -99,6 +99,58 @@ def preview_week() -> str:
     return "\n".join(lines)
 
 
+def apply_report_file(by_date: dict) -> str:
+    if not by_date:
+        return "В файле не нашлось данных по дням — ничего не записал."
+
+    spreadsheet = sheets_sync.get_spreadsheet()
+
+    by_month = defaultdict(dict)
+    for key, v in by_date.items():
+        d = datetime.date.fromisoformat(key)
+        by_month[(d.year, d.month)][key] = v
+
+    results = []
+    for (year, month), month_data in sorted(by_month.items()):
+        tab_title = f"месяц-{MONTH_NAMES_RU[month]}"
+        try:
+            ws = spreadsheet.worksheet(tab_title)
+        except gspread.WorksheetNotFound:
+            results.append(f"«{tab_title}»: такой вкладки нет, пропустил")
+            continue
+
+        updates = []
+        filled = 0
+        for row_idx, cell in enumerate(ws.col_values(1), start=1):
+            if row_idx == 1 or not cell:
+                continue
+            try:
+                row_date = datetime.datetime.strptime(cell.split(" ")[0], "%d.%m.%Y").date()
+            except ValueError:
+                continue
+            v = month_data.get(row_date.isoformat())
+            if v is None:
+                continue
+            updates.append({
+                "range": f"B{row_idx}:F{row_idx}",
+                "values": [[
+                    round(v.get("order_sum", 0)), round(v.get("sale_sum", 0)),
+                    round(v.get("buyout_pct", 0)), v.get("order_qty", 0), round(v.get("for_pay", 0)),
+                ]],
+            })
+            updates.append({
+                "range": f"H{row_idx}:I{row_idx}",
+                "values": [[round(v.get("logistics", 0)), round(v.get("storage", 0))]],
+            })
+            filled += 1
+
+        if updates:
+            ws.batch_update(updates, value_input_option="USER_ENTERED")
+        results.append(f"«{tab_title}»: обновлено дней — {filled}")
+
+    return "\n".join(results)
+
+
 def sync_svodny() -> str:
     if not _sync_lock.acquire(blocking=False):
         return "Синхронизация уже выполняется — подожди, пока закончится текущая."
