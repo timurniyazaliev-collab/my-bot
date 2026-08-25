@@ -26,6 +26,8 @@ def _get(url: str, params: dict) -> list[dict]:
             time.sleep(wait)
             continue
         r.raise_for_status()
+        if not r.text.strip():
+            return []
         return r.json() or []
     return []
 
