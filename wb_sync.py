@@ -65,6 +65,40 @@ def _aggregate_finance(date_from: str, date_to: str) -> dict:
     return per_day
 
 
+def preview_week() -> str:
+    today = datetime.date.today()
+    monday = today - datetime.timedelta(days=today.weekday())
+    date_from = monday.isoformat()
+
+    daily = _aggregate_orders_and_sales(date_from)
+    time.sleep(2)
+    finance = _aggregate_finance(date_from, today.isoformat())
+
+    lines = [
+        "Черновик по Сводному отчёту за эту неделю (никуда не записано, только для сверки):",
+        "",
+    ]
+    d = monday
+    while d <= today:
+        key = d.isoformat()
+        o = daily.get(key, {"order_sum": 0, "order_qty": 0, "sale_sum": 0, "sale_qty": 0, "for_pay": 0})
+        f = finance.get(key, {"logistics": 0, "storage": 0})
+        buyout_pct = round(o["sale_qty"] / o["order_qty"] * 100) if o["order_qty"] else 0
+        lines.append(
+            f"{d.strftime('%d.%m')}: заказы {round(o['order_sum'])}₽ ({o['order_qty']} шт) · "
+            f"продажи {round(o['sale_sum'])}₽ · выкуп {buyout_pct}% · "
+            f"к перечислению {round(o['for_pay'])}₽ · логистика {round(f['logistics'])}₽ · "
+            f"хранение {round(f['storage'])}₽"
+        )
+        d += datetime.timedelta(days=1)
+
+    lines.append("")
+    lines.append(
+        "Сверь с реальным отчётом в кабинете WB (Аналитика → Отчёты → Сводный по продавцу) — совпадает?"
+    )
+    return "\n".join(lines)
+
+
 def sync_svodny() -> str:
     if not _sync_lock.acquire(blocking=False):
         return "Синхронизация уже выполняется — подожди, пока закончится текущая."

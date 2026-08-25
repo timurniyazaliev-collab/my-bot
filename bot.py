@@ -1,3 +1,4 @@
+import asyncio
 import os, logging
 from datetime import time as dt_time, timezone
 
@@ -8,6 +9,8 @@ from dotenv import load_dotenv
 import anthropic
 from telegram import BotCommand, ReplyKeyboardMarkup, Update
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
+
+import wb_sync
 
 load_dotenv()
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
@@ -128,6 +131,7 @@ BOT_COMMANDS = [
     BotCommand("post", "Готовый пост для соцсетей"),
     BotCommand("reels", "Сценарий для рилса"),
     BotCommand("sales", "Скрипты продаж и возражения"),
+    BotCommand("wb_preview", "Черновик сводного отчёта WB за неделю (только в чат)"),
     BotCommand("wb_sync", "Синхронизировать отчёты WB с Google Таблицами"),
     BotCommand("reset", "Очистить историю диалога"),
 ]
@@ -138,7 +142,7 @@ MAIN_KEYBOARD = ReplyKeyboardMarkup(
         ["/mentions", "/idea"],
         ["/post", "/reels"],
         ["/sales", "/reset"],
-        ["/wb_sync"],
+        ["/wb_preview", "/wb_sync"],
     ],
     resize_keyboard=True,
 )
@@ -294,9 +298,26 @@ async def sales(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
 async def wb_sync_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "Синхронизация WB отключена — она затирала нулями реальные цифры в таблице, "
-        "когда не могла получить данные от WB. Переделываю, чтобы такого больше не было."
+        "Запись в таблицу пока отключена — она затирала нулями реальные цифры, "
+        "когда не могла получить данные от WB. Используй /wb_preview, чтобы свериться, "
+        "прежде чем включим запись обратно."
     )
+
+
+async def wb_preview_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    await ctx.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
+    await update.message.reply_text("Считаю черновик по неделе, это может занять минуту...")
+    try:
+        summary = await asyncio.to_thread(wb_sync.preview_week)
+        await reply_long(update, summary)
+    except KeyError as e:
+        await update.message.reply_text(
+            f"Не настроена переменная окружения {e} в .env на сервере. "
+            "Нужны WB_API_TOKEN, GOOGLE_SHEET_ID и файл google_service_account.json."
+        )
+    except Exception:
+        log.exception("wb_preview command error")
+        await update.message.reply_text("Не получилось посчитать черновик. Попробуй ещё раз позже.")
 
 
 async def daily_news_digest(ctx: ContextTypes.DEFAULT_TYPE):
@@ -334,6 +355,7 @@ def main():
     app.add_handler(CommandHandler("reels", reels))
     app.add_handler(CommandHandler("sales", sales))
     app.add_handler(CommandHandler("wb_sync", wb_sync_cmd))
+    app.add_handler(CommandHandler("wb_preview", wb_preview_cmd))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, chat))
     log.info("Bot started")
     app.run_polling()
