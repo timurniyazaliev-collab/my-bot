@@ -137,6 +137,11 @@ ESCALATION_MARKER_GUIDE = f"""
 
 LEAD_SYSTEM = f"""{LEAD_MANAGER_CONTENT}
 
+Факты о проекте ЖК Dubai (используй точно, не выдумывай другие цифры,
+планировки, цену или сроки):
+
+{ZHK_DUBAI_INFO}
+
 {ESCALATION_MARKER_GUIDE}"""
 
 LEAD_GREETING = (
