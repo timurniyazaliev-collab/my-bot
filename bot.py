@@ -1,13 +1,13 @@
 import asyncio
 import os, logging
-from datetime import time as dt_time, timezone
+from datetime import time as dt_time, timezone, timedelta
 
 for v in ("HTTP_PROXY","HTTPS_PROXY","http_proxy","https_proxy","ALL_PROXY","all_proxy"):
     os.environ.pop(v, None)
 
 from dotenv import load_dotenv
 import anthropic
-from telegram import BotCommand, ReplyKeyboardMarkup, Update
+from telegram import BotCommand, BotCommandScopeChat, ReplyKeyboardMarkup, Update
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
 
 import wb_report_file
@@ -21,6 +21,8 @@ claude = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
 history: dict[int, list[dict]] = {}
 last_wb_report: dict[int, dict] = {}
 user_mode: dict[int, str] = {}
+test_history: dict[int, list[dict]] = {}
+testing_lead: set[int] = set()
 
 BASE_DIR = os.path.dirname(__file__)
 
@@ -33,6 +35,7 @@ def read_file(name: str) -> str:
 BUSINESS_CONTEXT = read_file("business.md")
 ZHK_DUBAI_INFO = read_file("zhk_dubai.md")
 SALES_SCRIPTS = read_file("sales_scripts.md")
+LEAD_MANAGER_CONTENT = read_file("lead_manager.md")
 
 OWNER_CHAT_ID_PATH = os.path.join(BASE_DIR, "owner_chat_id.txt")
 
@@ -48,6 +51,11 @@ def load_owner_chat_id() -> int | None:
             return int(f.read().strip())
     except (FileNotFoundError, ValueError):
         return None
+
+
+def is_owner_chat(chat_id: int) -> bool:
+    owner_id = load_owner_chat_id()
+    return owner_id is not None and chat_id == owner_id
 
 
 STYLE_GUIDE = """Формат ответа (обязательно):
@@ -114,11 +122,35 @@ SALES_SYSTEM = f"""{CORE_CONTEXT}
 ситуацию, отвечай на возражения клиентов, объясняй условия покупки
 понятным языком, которым можно сразу говорить с клиентом."""
 
+ESCALATION_START = "###ESCALATION_START###"
+ESCALATION_END = "###ESCALATION_END###"
+
+ESCALATION_MARKER_GUIDE = f"""
+Технический формат передачи лида (обязательно соблюдай):
+Когда по правилам эскалации нужно передать лида живому менеджеру,
+сначала напиши клиенту короткое тёплое сообщение о том, что подключаешь
+коллегу — без карточки лида в этом сообщении. Затем отдельным блоком в
+самом конце ответа выведи карточку лида строго между метками
+{ESCALATION_START} и {ESCALATION_END} — этот блок клиенту не отправится,
+он уходит менеджеру напрямую. Если эскалация не нужна — не добавляй эти
+метки вообще."""
+
+LEAD_SYSTEM = f"""{LEAD_MANAGER_CONTENT}
+
+{ESCALATION_MARKER_GUIDE}"""
+
+LEAD_GREETING = (
+    "Здравствуйте! Это ИИ-помощник отдела продаж ЖК Dubai (S House "
+    "Group). Подскажите, пожалуйста, удобно ли вам сейчас немного "
+    "пообщаться, или лучше вернусь чуть позже?"
+)
+
 SYSTEM_PROMPTS = {
     "chat": CHAT_SYSTEM,
     "marketer": MARKETER_SYSTEM,
     "content": CONTENT_SYSTEM,
     "sales": SALES_SYSTEM,
+    "lead": LEAD_SYSTEM,
 }
 SEARCH_MODES = {"marketer"}
 
@@ -136,6 +168,8 @@ BOT_COMMANDS = [
     BotCommand("wb_preview", "Черновик сводного отчёта WB за неделю (только в чат)"),
     BotCommand("wb_apply", "Записать в таблицу цифры из последнего файла WB"),
     BotCommand("wb_sync", "Синхронизировать отчёты WB с Google Таблицами"),
+    BotCommand("test_client", "Посмотреть на бота глазами клиента (тест)"),
+    BotCommand("end_test", "Выйти из режима теста"),
     BotCommand("reset", "Очистить историю диалога"),
 ]
 
@@ -146,11 +180,76 @@ MAIN_KEYBOARD = ReplyKeyboardMarkup(
         ["/post", "/reels"],
         ["/sales", "/reset"],
         ["/wb_preview", "/wb_apply"],
+        ["/test_client", "/end_test"],
     ],
     resize_keyboard=True,
 )
 
 DAILY_DIGEST_UTC_TIME = dt_time(hour=3, minute=0, tzinfo=timezone.utc)  # 09:00 Бишкек
+
+LEAD_NUDGE_DELAY = timedelta(hours=24)
+LEAD_SILENCE_ESCALATE_DELAY = timedelta(days=3)
+
+
+def split_escalation(text: str) -> tuple[str, str | None]:
+    if ESCALATION_START in text and ESCALATION_END in text:
+        before, _, rest = text.partition(ESCALATION_START)
+        card, _, after = rest.partition(ESCALATION_END)
+        return (before + after).strip(), card.strip()
+    return text, None
+
+
+def _lead_job_name(kind: str, uid: int) -> str:
+    return f"lead_{kind}_{uid}"
+
+
+def cancel_lead_followups(ctx: ContextTypes.DEFAULT_TYPE, uid: int):
+    for kind in ("nudge", "silence"):
+        for job in ctx.job_queue.get_jobs_by_name(_lead_job_name(kind, uid)):
+            job.schedule_removal()
+
+
+def schedule_lead_followups(ctx: ContextTypes.DEFAULT_TYPE, chat_id: int, uid: int):
+    cancel_lead_followups(ctx, uid)
+    ctx.job_queue.run_once(
+        lead_nudge_job, LEAD_NUDGE_DELAY, chat_id=chat_id, name=_lead_job_name("nudge", uid), data={"uid": uid}
+    )
+    ctx.job_queue.run_once(
+        lead_silence_escalate_job,
+        LEAD_SILENCE_ESCALATE_DELAY,
+        chat_id=chat_id,
+        name=_lead_job_name("silence", uid),
+        data={"uid": uid},
+    )
+
+
+async def lead_nudge_job(ctx: ContextTypes.DEFAULT_TYPE):
+    await ctx.bot.send_message(
+        chat_id=ctx.job.chat_id,
+        text="Добрый день! Остались ли у вас вопросы по ЖК Dubai, или что-то заинтересовало в презентации?",
+    )
+
+
+async def lead_silence_escalate_job(ctx: ContextTypes.DEFAULT_TYPE):
+    owner_id = load_owner_chat_id()
+    if owner_id is None:
+        return
+    uid = ctx.job.data["uid"]
+    await ctx.bot.send_message(
+        chat_id=owner_id,
+        text=f"Лид id{uid} не отвечает уже 3 дня после последнего контакта — стоит написать напрямую.",
+    )
+
+
+async def forward_lead_card(ctx: ContextTypes.DEFAULT_TYPE, update: Update, card: str):
+    owner_id = load_owner_chat_id()
+    if owner_id is None:
+        return
+    user = update.effective_user
+    contact = f"@{user.username}" if user.username else f"id{user.id}"
+    link = f"https://t.me/{user.username}" if user.username else f"tg://user?id={user.id}"
+    header = f"Новый лид от {user.full_name} ({contact})\n{link}\n\n"
+    await ctx.bot.send_message(chat_id=owner_id, text=header + card)
 
 
 async def reply_long(update: Update, text: str):
@@ -191,34 +290,120 @@ async def run_command(update: Update, ctx: ContextTypes.DEFAULT_TYPE, mode: str,
         await update.message.reply_text(error_msg)
 
 
+async def handle_lead_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE, test: bool = False):
+    uid = update.effective_user.id
+    chat_id = update.effective_chat.id
+    store = test_history if test else history
+    await ctx.bot.send_chat_action(chat_id=chat_id, action="typing")
+    try:
+        store.setdefault(uid, []).append({"role": "user", "content": update.message.text})
+        raw = ask_claude(SYSTEM_PROMPTS["lead"], store[uid])
+        store[uid].append({"role": "assistant", "content": raw})
+        store[uid] = store[uid][-30:]
+        client_text, card = split_escalation(raw)
+        if client_text:
+            await reply_long(update, client_text)
+        if not card:
+            if not test:
+                schedule_lead_followups(ctx, chat_id, uid)
+            return
+        if test:
+            await update.message.reply_text("[Тест] В этот момент бот передал бы менеджеру карточку:\n\n" + card)
+        else:
+            await forward_lead_card(ctx, update, card)
+            cancel_lead_followups(ctx, uid)
+    except Exception:
+        log.exception("lead chat error")
+        await update.message.reply_text("Секунду, что-то пошло не так — уточню и вернусь с ответом.")
+
+
 async def start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    save_owner_chat_id(update.effective_chat.id)
-    await update.message.reply_text(
-        "Привет! Я твой помощник на Claude — маркетолог и помощник "
-        "руководителя отдела продаж S House Group.\n"
-        "Спрашивай что угодно, а для остального нажимай кнопки внизу "
-        "(/post, /reels и /sales ещё попросят детали — просто допиши "
-        "их текстом после кнопки). После команды можно продолжать "
-        "разговор обычным текстом — помню контекст, пока не позовёшь "
-        "/reset или другую команду. Каждый день в 9:00 сам пришлю "
-        "сводку новостей рынка.",
-        reply_markup=MAIN_KEYBOARD,
-    )
+    chat_id = update.effective_chat.id
+    if load_owner_chat_id() is None:
+        save_owner_chat_id(chat_id)
+
+    if is_owner_chat(chat_id):
+        await ctx.bot.set_my_commands(BOT_COMMANDS, scope=BotCommandScopeChat(chat_id=chat_id))
+        await update.message.reply_text(
+            "Привет! Я твой помощник на Claude — маркетолог и помощник "
+            "руководителя отдела продаж S House Group.\n"
+            "Спрашивай что угодно, а для остального нажимай кнопки внизу "
+            "(/post, /reels и /sales ещё попросят детали — просто допиши "
+            "их текстом после кнопки). После команды можно продолжать "
+            "разговор обычным текстом — помню контекст, пока не позовёшь "
+            "/reset или другую команду. Каждый день в 9:00 сам пришлю "
+            "сводку новостей рынка.",
+            reply_markup=MAIN_KEYBOARD,
+        )
+        return
+
+    uid = update.effective_user.id
+    user_mode[uid] = "lead"
+    await update.message.reply_text(LEAD_GREETING)
+    schedule_lead_followups(ctx, chat_id, uid)
 
 
 async def reset(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
+    chat_id = update.effective_chat.id
     history.pop(uid, None)
-    user_mode.pop(uid, None)
-    await update.message.reply_text("История очищена, снова обычный режим.")
+    if is_owner_chat(chat_id):
+        user_mode.pop(uid, None)
+        was_testing = uid in testing_lead
+        testing_lead.discard(uid)
+        test_history.pop(uid, None)
+        msg = "Вышел из теста и очистил историю, снова обычный режим." if was_testing else "История очищена, снова обычный режим."
+        await update.message.reply_text(msg)
+        return
+    user_mode[uid] = "lead"
+    cancel_lead_followups(ctx, uid)
+    await update.message.reply_text("История очищена, начнём заново.")
 
 
 async def chat(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    chat_id = update.effective_chat.id
     uid = update.effective_user.id
-    mode = user_mode.get(uid, "chat")
-    await run_command(update, ctx, mode, update.message.text, "Ошибка. Попробуй ещё раз.")
+    if is_owner_chat(chat_id):
+        if uid in testing_lead:
+            await handle_lead_message(update, ctx, test=True)
+            return
+        mode = user_mode.get(uid, "chat")
+        await run_command(update, ctx, mode, update.message.text, "Ошибка. Попробуй ещё раз.")
+        return
+    await handle_lead_message(update, ctx)
 
 
+def owner_only(handler):
+    async def wrapper(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+        if not is_owner_chat(update.effective_chat.id):
+            await handle_lead_message(update, ctx)
+            return
+        await handler(update, ctx)
+    return wrapper
+
+
+@owner_only
+async def test_client_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    uid = update.effective_user.id
+    testing_lead.add(uid)
+    test_history.pop(uid, None)
+    await update.message.reply_text(
+        "Режим теста включён: дальше пиши что угодно, как будто ты клиент, "
+        "который впервые пишет про ЖК Dubai. Отвечать будет ИИ-менеджер по "
+        "продажам, а не твой обычный помощник. Чтобы выйти — набери /end_test."
+    )
+    await update.message.reply_text(LEAD_GREETING)
+
+
+@owner_only
+async def end_test_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    uid = update.effective_user.id
+    testing_lead.discard(uid)
+    test_history.pop(uid, None)
+    await update.message.reply_text("Вышел из теста, снова обычный режим помощника.")
+
+
+@owner_only
 async def news(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await run_command(
         update, ctx, "marketer",
@@ -229,6 +414,7 @@ async def news(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     )
 
 
+@owner_only
 async def competitors(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await run_command(
         update, ctx, "marketer",
@@ -240,6 +426,7 @@ async def competitors(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     )
 
 
+@owner_only
 async def mentions(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     query = " ".join(ctx.args) if ctx.args else "S House Group, ЖК Dubai"
     await run_command(
@@ -251,6 +438,7 @@ async def mentions(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     )
 
 
+@owner_only
 async def idea(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await run_command(
         update, ctx, "content",
@@ -261,6 +449,7 @@ async def idea(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     )
 
 
+@owner_only
 async def post(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not ctx.args:
         await update.message.reply_text("Укажи тему, например: /post скидка на квартиры с котлована")
@@ -275,6 +464,7 @@ async def post(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     )
 
 
+@owner_only
 async def reels(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not ctx.args:
         await update.message.reply_text("Укажи тему, например: /reels обзор ЖК Dubai с высоты")
@@ -289,6 +479,7 @@ async def reels(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     )
 
 
+@owner_only
 async def sales(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if ctx.args:
         prompt = (
@@ -305,6 +496,7 @@ async def sales(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await run_command(update, ctx, "sales", prompt, "Не получилось собрать ответ. Попробуй ещё раз.")
 
 
+@owner_only
 async def wb_sync_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "Запись в таблицу пока отключена — она затирала нулями реальные цифры, "
@@ -313,6 +505,7 @@ async def wb_sync_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     )
 
 
+@owner_only
 async def wb_preview_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await ctx.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
     await update.message.reply_text("Считаю черновик по неделе, это может занять минуту...")
@@ -331,6 +524,8 @@ async def wb_preview_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
 
 async def wb_report_document(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    if not is_owner_chat(update.effective_chat.id):
+        return
     doc = update.message.document
     if not doc.file_name.lower().endswith(".xlsx"):
         return
@@ -351,6 +546,7 @@ async def wb_report_document(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Не получилось разобрать файл. Проверь, что это выгрузка «Сводного по продавцу», и попробуй ещё раз.")
 
 
+@owner_only
 async def wb_apply_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     by_date = last_wb_report.get(uid)
@@ -390,7 +586,10 @@ async def daily_news_digest(ctx: ContextTypes.DEFAULT_TYPE):
 
 
 async def setup_commands(app):
-    await app.bot.set_my_commands(BOT_COMMANDS)
+    await app.bot.set_my_commands([])  # клиентам не показываем внутренние команды
+    owner_id = load_owner_chat_id()
+    if owner_id is not None:
+        await app.bot.set_my_commands(BOT_COMMANDS, scope=BotCommandScopeChat(chat_id=owner_id))
     app.job_queue.run_daily(daily_news_digest, time=DAILY_DIGEST_UTC_TIME)
 
 
@@ -408,6 +607,8 @@ def main():
     app.add_handler(CommandHandler("wb_sync", wb_sync_cmd))
     app.add_handler(CommandHandler("wb_preview", wb_preview_cmd))
     app.add_handler(CommandHandler("wb_apply", wb_apply_cmd))
+    app.add_handler(CommandHandler("test_client", test_client_cmd))
+    app.add_handler(CommandHandler("end_test", end_test_cmd))
     app.add_handler(MessageHandler(filters.Document.ALL, wb_report_document))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, chat))
     log.info("Bot started")
