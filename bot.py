@@ -21,6 +21,8 @@ claude = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
 history: dict[int, list[dict]] = {}
 last_wb_report: dict[int, dict] = {}
 user_mode: dict[int, str] = {}
+test_history: dict[int, list[dict]] = {}
+testing_lead: set[int] = set()
 
 BASE_DIR = os.path.dirname(__file__)
 
@@ -166,6 +168,8 @@ BOT_COMMANDS = [
     BotCommand("wb_preview", "Черновик сводного отчёта WB за неделю (только в чат)"),
     BotCommand("wb_apply", "Записать в таблицу цифры из последнего файла WB"),
     BotCommand("wb_sync", "Синхронизировать отчёты WB с Google Таблицами"),
+    BotCommand("test_client", "Посмотреть на бота глазами клиента (тест)"),
+    BotCommand("end_test", "Выйти из режима теста"),
     BotCommand("reset", "Очистить историю диалога"),
 ]
 
@@ -176,6 +180,7 @@ MAIN_KEYBOARD = ReplyKeyboardMarkup(
         ["/post", "/reels"],
         ["/sales", "/reset"],
         ["/wb_preview", "/wb_apply"],
+        ["/test_client", "/end_test"],
     ],
     resize_keyboard=True,
 )
@@ -285,23 +290,28 @@ async def run_command(update: Update, ctx: ContextTypes.DEFAULT_TYPE, mode: str,
         await update.message.reply_text(error_msg)
 
 
-async def handle_lead_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+async def handle_lead_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE, test: bool = False):
     uid = update.effective_user.id
     chat_id = update.effective_chat.id
+    store = test_history if test else history
     await ctx.bot.send_chat_action(chat_id=chat_id, action="typing")
     try:
-        history.setdefault(uid, []).append({"role": "user", "content": update.message.text})
-        raw = ask_claude(SYSTEM_PROMPTS["lead"], history[uid])
-        history[uid].append({"role": "assistant", "content": raw})
-        history[uid] = history[uid][-30:]
+        store.setdefault(uid, []).append({"role": "user", "content": update.message.text})
+        raw = ask_claude(SYSTEM_PROMPTS["lead"], store[uid])
+        store[uid].append({"role": "assistant", "content": raw})
+        store[uid] = store[uid][-30:]
         client_text, card = split_escalation(raw)
         if client_text:
             await reply_long(update, client_text)
-        if card:
+        if not card:
+            if not test:
+                schedule_lead_followups(ctx, chat_id, uid)
+            return
+        if test:
+            await update.message.reply_text("[Тест] В этот момент бот передал бы менеджеру карточку:\n\n" + card)
+        else:
             await forward_lead_card(ctx, update, card)
             cancel_lead_followups(ctx, uid)
-        else:
-            schedule_lead_followups(ctx, chat_id, uid)
     except Exception:
         log.exception("lead chat error")
         await update.message.reply_text("Секунду, что-то пошло не так — уточню и вернусь с ответом.")
@@ -339,7 +349,11 @@ async def reset(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     history.pop(uid, None)
     if is_owner_chat(chat_id):
         user_mode.pop(uid, None)
-        await update.message.reply_text("История очищена, снова обычный режим.")
+        was_testing = uid in testing_lead
+        testing_lead.discard(uid)
+        test_history.pop(uid, None)
+        msg = "Вышел из теста и очистил историю, снова обычный режим." if was_testing else "История очищена, снова обычный режим."
+        await update.message.reply_text(msg)
         return
     user_mode[uid] = "lead"
     cancel_lead_followups(ctx, uid)
@@ -348,8 +362,11 @@ async def reset(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
 async def chat(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
+    uid = update.effective_user.id
     if is_owner_chat(chat_id):
-        uid = update.effective_user.id
+        if uid in testing_lead:
+            await handle_lead_message(update, ctx, test=True)
+            return
         mode = user_mode.get(uid, "chat")
         await run_command(update, ctx, mode, update.message.text, "Ошибка. Попробуй ещё раз.")
         return
@@ -363,6 +380,27 @@ def owner_only(handler):
             return
         await handler(update, ctx)
     return wrapper
+
+
+@owner_only
+async def test_client_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    uid = update.effective_user.id
+    testing_lead.add(uid)
+    test_history.pop(uid, None)
+    await update.message.reply_text(
+        "Режим теста включён: дальше пиши что угодно, как будто ты клиент, "
+        "который впервые пишет про ЖК Dubai. Отвечать будет ИИ-менеджер по "
+        "продажам, а не твой обычный помощник. Чтобы выйти — набери /end_test."
+    )
+    await update.message.reply_text(LEAD_GREETING)
+
+
+@owner_only
+async def end_test_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    uid = update.effective_user.id
+    testing_lead.discard(uid)
+    test_history.pop(uid, None)
+    await update.message.reply_text("Вышел из теста, снова обычный режим помощника.")
 
 
 @owner_only
@@ -569,6 +607,8 @@ def main():
     app.add_handler(CommandHandler("wb_sync", wb_sync_cmd))
     app.add_handler(CommandHandler("wb_preview", wb_preview_cmd))
     app.add_handler(CommandHandler("wb_apply", wb_apply_cmd))
+    app.add_handler(CommandHandler("test_client", test_client_cmd))
+    app.add_handler(CommandHandler("end_test", end_test_cmd))
     app.add_handler(MessageHandler(filters.Document.ALL, wb_report_document))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, chat))
     log.info("Bot started")
