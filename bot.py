@@ -312,9 +312,12 @@ async def handle_lead_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE, te
         else:
             await forward_lead_card(ctx, update, card)
             cancel_lead_followups(ctx, uid)
-    except Exception:
+    except Exception as e:
         log.exception("lead chat error")
-        await update.message.reply_text("Секунду, что-то пошло не так — уточню и вернусь с ответом.")
+        if test:
+            await update.message.reply_text(f"[Тест] Ошибка: {type(e).__name__}: {e}")
+        else:
+            await update.message.reply_text("Секунду, что-то пошло не так — уточню и вернусь с ответом.")
 
 
 async def start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
