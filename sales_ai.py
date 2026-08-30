@@ -6,6 +6,7 @@ file imports from here instead of duplicating the sales script/facts.
 """
 
 import os
+import re
 
 import anthropic
 from dotenv import load_dotenv
@@ -107,23 +108,40 @@ ESCALATION_MARKER_GUIDE = f"""
 PHOTOS_START = "###SEND_PHOTOS:"
 PHOTOS_END = "###"
 
-PHOTO_CATEGORIES_AVAILABLE = ["exterior"]
+PHOTO_CATEGORIES_AVAILABLE = [
+    "exterior",
+    "plan_1k",
+    "plan_2k",
+    "plan_3k_86",
+    "plan_3k_95",
+    "plan_4k",
+]
 
 PHOTO_MARKER_GUIDE = f"""
 Технический формат отправки фото (обязательно соблюдай):
-Сейчас доступна только одна категория фото — "exterior" (реальные
-рендеры внешнего вида комплекса). Планировок квартир и презентации
-пока нет — если клиент просит именно это, скажи, что пришлёшь, как
-только будут готовы, и передай менеджеру, метку для этого не
-используй.
+Доступные категории реальных фото/планировок:
+- "exterior" — рендеры внешнего вида комплекса.
+- "plan_1k" — планировка 1-комнатной (45-46 м², этажи 3-23, юг).
+- "plan_2k" — планировка 2-комнатной (72-74 м², этажи 3-14).
+- "plan_3k_86" — планировка 3-комнатной 86-89 м² (этажи 3-22).
+- "plan_3k_95" — планировка 3-комнатной 94,85 м² (только 23 этаж).
+- "plan_4k" — планировка 4-комнатной (120-122 м², этажи 15-21).
+Презентации в PDF пока нет — если клиент просит именно её, скажи, что
+пришлёшь, как только будет готова, и передай менеджеру, метку для
+этого не используй. Пентхаусов как отдельной категории фото тоже пока
+нет.
 
-Когда уместно показать внешний вид комплекса (клиент прямо просит фото
-или разговор дошёл до презентации проекта) — напиши клиенту короткое
-тёплое сообщение о том, что сейчас пришлёшь фото, и отдельным блоком в
-самом конце ответа добавь метку {PHOTOS_START}exterior{PHOTOS_END} —
-сама метка клиенту не отправится, по ней система прикрепит настоящие
-фото. Не отправляй фото повторно в одном разговоре, если уже
-отправлял. Если фото сейчас не нужны — не добавляй метку вообще."""
+Когда уместно показать фото или планировку — например, разговор дошёл
+до презентации проекта, или стала понятна интересующая клиента
+комнатность — напиши клиенту короткое тёплое сообщение о том, что
+сейчас пришлёшь фото/планировку, и отдельным блоком в конце ответа
+добавь метку {PHOTOS_START}категория{PHOTOS_END} (можно несколько
+меток подряд, если уместно прислать сразу и планировку, и внешний вид)
+— сами метки клиенту не отправятся, по ним система прикрепит настоящие
+файлы. Отправляй только ту планировку, комнатность которой реально
+интересует клиента — не вываливай все сразу. Не отправляй один и тот
+же файл повторно в одном разговоре, если уже отправлял. Если фото
+сейчас не нужны — не добавляй метки вообще."""
 
 LEAD_SYSTEM = f"""{LEAD_MANAGER_CONTENT}
 
@@ -179,19 +197,19 @@ def split_escalation(text: str) -> tuple[str, str | None]:
     return text, None
 
 
-def split_photo_request(text: str) -> tuple[str, str | None]:
-    if PHOTOS_START not in text:
-        return text, None
-    before, _, rest = text.partition(PHOTOS_START)
-    category, _, after = rest.partition(PHOTOS_END)
-    category = category.strip()
-    cleaned = (before + after).strip()
-    return cleaned, category if category in PHOTO_CATEGORIES_AVAILABLE else None
+PHOTOS_PATTERN = re.compile(re.escape(PHOTOS_START) + r"(.*?)" + re.escape(PHOTOS_END))
 
 
-def get_lead_reply(messages: list[dict]) -> tuple[str, str | None, str | None]:
-    """Client-facing lead persona. Returns (text to show the client, escalation card or None, photo category or None)."""
+def split_photo_request(text: str) -> tuple[str, list[str]]:
+    categories = [m.strip() for m in PHOTOS_PATTERN.findall(text)]
+    categories = [c for c in categories if c in PHOTO_CATEGORIES_AVAILABLE]
+    cleaned = PHOTOS_PATTERN.sub("", text).strip()
+    return cleaned, categories
+
+
+def get_lead_reply(messages: list[dict]) -> tuple[str, str | None, list[str]]:
+    """Client-facing lead persona. Returns (text to show the client, escalation card or None, photo categories to send)."""
     raw = ask_claude(SYSTEM_PROMPTS["lead"], messages)
     text_after_escalation, card = split_escalation(raw)
-    client_text, photo_category = split_photo_request(text_after_escalation)
-    return client_text, card, photo_category
+    client_text, photo_categories = split_photo_request(text_after_escalation)
+    return client_text, card, photo_categories

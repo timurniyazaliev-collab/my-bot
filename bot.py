@@ -31,6 +31,11 @@ MEDIA_DIR = os.path.join(BASE_DIR, "media")
 
 PHOTO_CATEGORIES = {
     "exterior": sorted(glob.glob(os.path.join(MEDIA_DIR, "exterior", "*.jpg"))),
+    "plan_1k": [os.path.join(MEDIA_DIR, "plans", "plan_1k_45.jpg")],
+    "plan_2k": [os.path.join(MEDIA_DIR, "plans", "plan_2k_72.jpg")],
+    "plan_3k_86": [os.path.join(MEDIA_DIR, "plans", "plan_3k_86.jpg")],
+    "plan_3k_95": [os.path.join(MEDIA_DIR, "plans", "plan_3k_95.jpg")],
+    "plan_4k": [os.path.join(MEDIA_DIR, "plans", "plan_4k_120.jpg")],
 }
 
 OWNER_CHAT_ID_PATH = os.path.join(BASE_DIR, "owner_chat_id.txt")
@@ -190,13 +195,13 @@ async def handle_lead_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE, te
     await ctx.bot.send_chat_action(chat_id=chat_id, action="typing")
     try:
         store.setdefault(uid, []).append({"role": "user", "content": update.message.text})
-        client_text, card, photo_category = get_lead_reply(store[uid])
+        client_text, card, photo_categories = get_lead_reply(store[uid])
         store[uid].append({"role": "assistant", "content": client_text})
         store[uid] = store[uid][-30:]
         if client_text:
             await reply_long(update, client_text)
-        if photo_category:
-            await send_photo_category(ctx, chat_id, photo_category)
+        for category in photo_categories:
+            await send_photo_category(ctx, chat_id, category)
         if not card:
             if not test:
                 schedule_lead_followups(ctx, chat_id, uid)
