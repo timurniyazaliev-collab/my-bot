@@ -29,13 +29,17 @@ testing_lead: set[int] = set()
 BASE_DIR = os.path.dirname(__file__)
 MEDIA_DIR = os.path.join(BASE_DIR, "media")
 
+def _plan_files(prefix: str) -> list[str]:
+    return sorted(glob.glob(os.path.join(MEDIA_DIR, "plans", f"{prefix}*.jpg")))
+
+
 PHOTO_CATEGORIES = {
     "exterior": sorted(glob.glob(os.path.join(MEDIA_DIR, "exterior", "*.jpg"))),
-    "plan_1k": [os.path.join(MEDIA_DIR, "plans", "plan_1k_45.jpg")],
-    "plan_2k": [os.path.join(MEDIA_DIR, "plans", "plan_2k_72.jpg")],
-    "plan_3k_86": [os.path.join(MEDIA_DIR, "plans", "plan_3k_86.jpg")],
-    "plan_3k_95": [os.path.join(MEDIA_DIR, "plans", "plan_3k_95.jpg")],
-    "plan_4k": [os.path.join(MEDIA_DIR, "plans", "plan_4k_120.jpg")],
+    "plan_1k": _plan_files("plan_1k"),
+    "plan_2k": _plan_files("plan_2k"),
+    "plan_3k_86": _plan_files("plan_3k_86"),
+    "plan_3k_95": _plan_files("plan_3k_95"),
+    "plan_4k": _plan_files("plan_4k"),
 }
 
 OWNER_CHAT_ID_PATH = os.path.join(BASE_DIR, "owner_chat_id.txt")
