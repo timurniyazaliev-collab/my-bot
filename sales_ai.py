@@ -8,6 +8,9 @@ file imports from here instead of duplicating the sales script/facts.
 import os
 
 import anthropic
+from dotenv import load_dotenv
+
+load_dotenv()
 
 BASE_DIR = os.path.dirname(__file__)
 
