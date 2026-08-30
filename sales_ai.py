@@ -104,6 +104,27 @@ ESCALATION_MARKER_GUIDE = f"""
 он уходит менеджеру напрямую. Если эскалация не нужна — не добавляй эти
 метки вообще."""
 
+PHOTOS_START = "###SEND_PHOTOS:"
+PHOTOS_END = "###"
+
+PHOTO_CATEGORIES_AVAILABLE = ["exterior"]
+
+PHOTO_MARKER_GUIDE = f"""
+Технический формат отправки фото (обязательно соблюдай):
+Сейчас доступна только одна категория фото — "exterior" (реальные
+рендеры внешнего вида комплекса). Планировок квартир и презентации
+пока нет — если клиент просит именно это, скажи, что пришлёшь, как
+только будут готовы, и передай менеджеру, метку для этого не
+используй.
+
+Когда уместно показать внешний вид комплекса (клиент прямо просит фото
+или разговор дошёл до презентации проекта) — напиши клиенту короткое
+тёплое сообщение о том, что сейчас пришлёшь фото, и отдельным блоком в
+самом конце ответа добавь метку {PHOTOS_START}exterior{PHOTOS_END} —
+сама метка клиенту не отправится, по ней система прикрепит настоящие
+фото. Не отправляй фото повторно в одном разговоре, если уже
+отправлял. Если фото сейчас не нужны — не добавляй метку вообще."""
+
 LEAD_SYSTEM = f"""{LEAD_MANAGER_CONTENT}
 
 Факты о проекте ЖК Dubai (используй точно, не выдумывай другие цифры,
@@ -111,7 +132,9 @@ LEAD_SYSTEM = f"""{LEAD_MANAGER_CONTENT}
 
 {ZHK_DUBAI_INFO}
 
-{ESCALATION_MARKER_GUIDE}"""
+{ESCALATION_MARKER_GUIDE}
+
+{PHOTO_MARKER_GUIDE}"""
 
 LEAD_GREETING = (
     "Здравствуйте! Это ИИ-помощник отдела продаж ЖК Dubai (S House "
@@ -156,7 +179,19 @@ def split_escalation(text: str) -> tuple[str, str | None]:
     return text, None
 
 
-def get_lead_reply(messages: list[dict]) -> tuple[str, str | None]:
-    """Client-facing lead persona. Returns (text to show the client, escalation card or None)."""
+def split_photo_request(text: str) -> tuple[str, str | None]:
+    if PHOTOS_START not in text:
+        return text, None
+    before, _, rest = text.partition(PHOTOS_START)
+    category, _, after = rest.partition(PHOTOS_END)
+    category = category.strip()
+    cleaned = (before + after).strip()
+    return cleaned, category if category in PHOTO_CATEGORIES_AVAILABLE else None
+
+
+def get_lead_reply(messages: list[dict]) -> tuple[str, str | None, str | None]:
+    """Client-facing lead persona. Returns (text to show the client, escalation card or None, photo category or None)."""
     raw = ask_claude(SYSTEM_PROMPTS["lead"], messages)
-    return split_escalation(raw)
+    text_after_escalation, card = split_escalation(raw)
+    client_text, photo_category = split_photo_request(text_after_escalation)
+    return client_text, card, photo_category

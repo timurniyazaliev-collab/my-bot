@@ -1,4 +1,5 @@
 import asyncio
+import glob
 import os, logging
 from datetime import time as dt_time, timezone, timedelta
 
@@ -9,7 +10,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-from telegram import BotCommand, BotCommandScopeChat, ReplyKeyboardMarkup, Update
+from telegram import BotCommand, BotCommandScopeChat, InputMediaPhoto, ReplyKeyboardMarkup, Update
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
 
 import wb_report_file
@@ -26,6 +27,11 @@ test_history: dict[int, list[dict]] = {}
 testing_lead: set[int] = set()
 
 BASE_DIR = os.path.dirname(__file__)
+MEDIA_DIR = os.path.join(BASE_DIR, "media")
+
+PHOTO_CATEGORIES = {
+    "exterior": sorted(glob.glob(os.path.join(MEDIA_DIR, "exterior", "*.jpg"))),
+}
 
 OWNER_CHAT_ID_PATH = os.path.join(BASE_DIR, "owner_chat_id.txt")
 
@@ -137,6 +143,20 @@ async def forward_lead_card(ctx: ContextTypes.DEFAULT_TYPE, update: Update, card
     await ctx.bot.send_message(chat_id=owner_id, text=header + card)
 
 
+async def send_photo_category(ctx: ContextTypes.DEFAULT_TYPE, chat_id: int, category: str):
+    paths = PHOTO_CATEGORIES.get(category)
+    if not paths:
+        return
+    for i in range(0, len(paths), 10):
+        batch = paths[i:i + 10]
+        files = [open(p, "rb") for p in batch]
+        try:
+            await ctx.bot.send_media_group(chat_id=chat_id, media=[InputMediaPhoto(f) for f in files])
+        finally:
+            for f in files:
+                f.close()
+
+
 async def reply_long(update: Update, text: str):
     for i in range(0, len(text), TELEGRAM_MAX_LEN):
         await update.message.reply_text(text[i:i + TELEGRAM_MAX_LEN])
@@ -170,11 +190,13 @@ async def handle_lead_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE, te
     await ctx.bot.send_chat_action(chat_id=chat_id, action="typing")
     try:
         store.setdefault(uid, []).append({"role": "user", "content": update.message.text})
-        client_text, card = get_lead_reply(store[uid])
+        client_text, card, photo_category = get_lead_reply(store[uid])
         store[uid].append({"role": "assistant", "content": client_text})
         store[uid] = store[uid][-30:]
         if client_text:
             await reply_long(update, client_text)
+        if photo_category:
+            await send_photo_category(ctx, chat_id, photo_category)
         if not card:
             if not test:
                 schedule_lead_followups(ctx, chat_id, uid)
