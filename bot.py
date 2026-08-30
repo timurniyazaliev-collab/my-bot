@@ -33,8 +33,15 @@ def _plan_files(prefix: str) -> list[str]:
     return sorted(glob.glob(os.path.join(MEDIA_DIR, "plans", f"{prefix}*.jpg")))
 
 
+def _exterior_files(prefix: str) -> list[str]:
+    return sorted(glob.glob(os.path.join(MEDIA_DIR, "exterior", f"{prefix}*.jpg")))
+
+
 PHOTO_CATEGORIES = {
-    "exterior": sorted(glob.glob(os.path.join(MEDIA_DIR, "exterior", "*.jpg"))),
+    "exterior_hero": _exterior_files("hero"),
+    "exterior_yard": _exterior_files("yard"),
+    "exterior_commercial": _exterior_files("commercial"),
+    "exterior_entrance": _exterior_files("entrance"),
     "plan_1k": _plan_files("plan_1k"),
     "plan_2k": _plan_files("plan_2k"),
     "plan_3k_86": _plan_files("plan_3k_86"),
