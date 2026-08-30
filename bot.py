@@ -6,6 +6,9 @@ for v in ("HTTP_PROXY","HTTPS_PROXY","http_proxy","https_proxy","ALL_PROXY","all
     os.environ.pop(v, None)
 
 from dotenv import load_dotenv
+
+load_dotenv()
+
 from telegram import BotCommand, BotCommandScopeChat, ReplyKeyboardMarkup, Update
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
 
@@ -13,7 +16,6 @@ import wb_report_file
 import wb_sync
 from sales_ai import ask_claude, get_reply, get_lead_reply, MARKETER_SYSTEM, LEAD_GREETING
 
-load_dotenv()
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 log = logging.getLogger(__name__)
 
