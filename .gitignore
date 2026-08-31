@@ -15,3 +15,16 @@ __pycache__/
 
 *.db
 
+# madeinside/ — everything under these dirs is pipeline output, not source
+madeinside/token.json
+madeinside/client_secret*.json
+madeinside/ideas_backlog.json
+madeinside/scripts/*
+!madeinside/scripts/.gitkeep
+madeinside/assets/*
+!madeinside/assets/.gitkeep
+madeinside/render/*
+!madeinside/render/.gitkeep
+madeinside/metadata/*
+!madeinside/metadata/.gitkeep
+
