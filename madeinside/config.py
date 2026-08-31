@@ -68,3 +68,11 @@ ASSETS_DIR = os.path.join(BASE_DIR, "assets")
 RENDER_DIR = os.path.join(BASE_DIR, "render")
 METADATA_DIR = os.path.join(BASE_DIR, "metadata")
 SCHEDULE_PATH = os.path.join(BASE_DIR, "schedule.json")
+PERSONA_PATH = os.path.join(BASE_DIR, "persona.md")
+
+
+def read_persona() -> str:
+    if not os.path.exists(PERSONA_PATH):
+        return ""
+    with open(PERSONA_PATH, "r", encoding="utf-8") as f:
+        return f.read()
