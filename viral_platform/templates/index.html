@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% block title %}Виральные Shorts{% endblock %}
+{% block content %}
+
+<form method="post" action="/discover" class="search-form">
+  <input type="text" name="query" placeholder="Ниша / ключевое слово (необязательно)">
+  <select name="days">
+    <option value="3">за 3 дня</option>
+    <option value="7" selected>за 7 дней</option>
+    <option value="14">за 14 дней</option>
+    <option value="30">за 30 дней</option>
+  </select>
+  <button type="submit">Найти вирусные Shorts</button>
+</form>
+
+{% if not videos %}
+  <p class="empty">Пока пусто. Запустите поиск выше — займёт несколько секунд.</p>
+{% else %}
+<table class="videos">
+  <thead>
+    <tr>
+      <th></th>
+      <th>Название</th>
+      <th>Канал</th>
+      <th>Просмотры</th>
+      <th>Скорость (просм./день)</th>
+      <th>Длительность</th>
+      <th>Опубликовано</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for v in videos %}
+    <tr onclick="window.location='/video/{{ v.video_id }}'">
+      <td><img src="{{ v.thumbnail_url }}" alt="" class="thumb"></td>
+      <td>{{ v.title }}</td>
+      <td>{{ v.channel_title }}</td>
+      <td>{{ "{:,}".format(v.view_count) }}</td>
+      <td>{{ "{:,.0f}".format(v.viral_score) }}</td>
+      <td>{{ v.duration_seconds }}с</td>
+      <td>{{ v.published_at[:10] }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+
+{% endblock %}
