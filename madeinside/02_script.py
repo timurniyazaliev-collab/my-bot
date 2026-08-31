@@ -72,7 +72,7 @@ def generate_script(idea: dict) -> list[dict]:
     client = anthropic.Anthropic(api_key=config.ANTHROPIC_API_KEY)
     response = client.messages.create(
         model=config.SCRIPT_MODEL,
-        max_tokens=3000,
+        max_tokens=6000,
         messages=[
             {
                 "role": "user",
@@ -80,7 +80,7 @@ def generate_script(idea: dict) -> list[dict]:
             }
         ],
     )
-    blocks = _extract_json_array(response.content[0].text)
+    blocks = _extract_json_array(common.extract_text(response))
     return _with_timecodes(blocks)
 
 

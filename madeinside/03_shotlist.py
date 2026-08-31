@@ -40,10 +40,10 @@ def generate_shotlist(blocks: list[dict]) -> dict:
     client = anthropic.Anthropic(api_key=config.ANTHROPIC_API_KEY)
     response = client.messages.create(
         model=config.SHOTLIST_MODEL,
-        max_tokens=1500,
+        max_tokens=3000,
         messages=[{"role": "user", "content": PROMPT.format(blocks=_format_blocks(blocks))}],
     )
-    raw = _extract_json_object(response.content[0].text)
+    raw = _extract_json_object(common.extract_text(response))
     return {int(k): v for k, v in raw.items()}
 
 

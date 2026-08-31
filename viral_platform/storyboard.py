@@ -67,10 +67,13 @@ def build_storyboard(video_id: str, force: bool = False) -> dict:
     prompt = PROMPT_TEMPLATE.format(transcript=_format_transcript(transcript["segments"]))
     response = _get_client().messages.create(
         model=config.STORYBOARD_MODEL,
-        max_tokens=2000,
+        max_tokens=4000,
         messages=[{"role": "user", "content": prompt}],
     )
-    parsed = _extract_json(response.content[0].text)
+    if response.stop_reason == "max_tokens":
+        raise RuntimeError("Ответ Claude обрезан по лимиту max_tokens — увеличьте лимит.")
+    text = "\n\n".join(b.text for b in response.content if b.type == "text")
+    parsed = _extract_json(text)
 
     db.save_storyboard(video_id, parsed["scenes"], parsed["hook_analysis"])
     return {

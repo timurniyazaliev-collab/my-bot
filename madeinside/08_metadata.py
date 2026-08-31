@@ -50,7 +50,7 @@ def generate_metadata(idea: dict, script: dict) -> dict:
     client = anthropic.Anthropic(api_key=config.ANTHROPIC_API_KEY)
     response = client.messages.create(
         model=config.METADATA_MODEL,
-        max_tokens=1200,
+        max_tokens=3000,
         messages=[
             {
                 "role": "user",
@@ -62,7 +62,7 @@ def generate_metadata(idea: dict, script: dict) -> dict:
             }
         ],
     )
-    return _extract_json_object(response.content[0].text)
+    return _extract_json_object(common.extract_text(response))
 
 
 def main():

@@ -66,9 +66,11 @@ def generate_script(
     )
     response = _get_client().messages.create(
         model=config.SCRIPT_MODEL,
-        max_tokens=1500,
+        max_tokens=3000,
         messages=[{"role": "user", "content": prompt}],
     )
-    script_text = response.content[0].text.strip()
+    if response.stop_reason == "max_tokens":
+        raise RuntimeError("Ответ Claude обрезан по лимиту max_tokens — увеличьте лимит.")
+    script_text = "\n\n".join(b.text for b in response.content if b.type == "text").strip()
     db.save_script(video_id, script_text)
     return script_text

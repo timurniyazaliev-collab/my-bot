@@ -38,10 +38,10 @@ def generate_ideas(count: int) -> list[dict]:
     client = anthropic.Anthropic(api_key=config.ANTHROPIC_API_KEY)
     response = client.messages.create(
         model=config.IDEAS_MODEL,
-        max_tokens=2000,
+        max_tokens=4000,
         messages=[{"role": "user", "content": PROMPT.format(count=count)}],
     )
-    raw_ideas = _extract_json_array(response.content[0].text)
+    raw_ideas = _extract_json_array(common.extract_text(response))
 
     ideas = []
     for raw in raw_ideas:

@@ -30,6 +30,17 @@ def write_json(path: str, data) -> None:
         json.dump(data, f, ensure_ascii=False, indent=2)
 
 
+def extract_text(response) -> str:
+    """Joins the text blocks of a Claude response, skipping thinking blocks
+    (opus models can return a ThinkingBlock before the actual text)."""
+    if response.stop_reason == "max_tokens":
+        raise RuntimeError(
+            "Ответ Claude обрезан по лимиту max_tokens (часть бюджета уходит на "
+            "скрытый 'thinking') — увеличьте лимит для этого шага в config.py."
+        )
+    return "\n\n".join(b.text for b in response.content if b.type == "text")
+
+
 # --- ideas backlog --------------------------------------------------------
 
 def load_backlog() -> list[dict]:
