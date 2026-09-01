@@ -75,7 +75,7 @@ def lead_reply():
 
     history = conversations.setdefault(lead_id, [])
     history.append({"role": "user", "content": message})
-    client_text, escalation_card, photo_categories = get_lead_reply(history)
+    client_text, escalation_card, photo_categories, unknown_notes = get_lead_reply(history)
     history.append({"role": "assistant", "content": client_text})
     conversations[lead_id] = history[-30:]
 
@@ -85,6 +85,7 @@ def lead_reply():
             "escalate": escalation_card is not None,
             "escalation_card": escalation_card,
             "photos": [{"category": cat, "urls": _photo_urls(cat)} for cat in photo_categories],
+            "unknown_questions": unknown_notes,
         }
     )
 

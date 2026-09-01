@@ -35,7 +35,12 @@ STYLE_GUIDE = """Формат ответа (обязательно):
 - Пиши грамотно, ясно, короткими абзацами, деловым языком без канцелярита.
 - Где это помогает понять мысль — добавь короткий конкретный пример
   (цифру, фразу, мини-сценарий, расчёт).
-- Без лишних эмодзи и восклицательных знаков."""
+- Без лишних эмодзи и восклицательных знаков.
+- Числа от 1000 и больше — пиши с пробелом между разрядами (100 800, а
+  не 100800; 30 240, а не 30240).
+- Если сравниваешь несколько вариантов подряд (квартиры, схемы оплаты,
+  этажи) — разделяй их пустой строкой между блоками, не пиши слитно
+  одним абзацем."""
 
 ASSISTANT_ROLE = """Ты — личный ИИ-помощник Тимура: маркетолог и руководитель отдела
 продаж в агентстве недвижимости S House Group (Бишкек) и его проекте
@@ -105,6 +110,11 @@ ESCALATION_MARKER_GUIDE = f"""
 он уходит менеджеру напрямую. Если эскалация не нужна — не добавляй эти
 метки вообще."""
 
+LANGUAGE_GUIDE = """Язык общения: по умолчанию русский. Если клиент сам
+пишет на кыргызском — переходи на кыргызский и дальше веди диалог на
+нём, сохраняя тот же тон и стиль. Если клиент смешивает языки или
+переходит обратно на русский — подстраивайся под него."""
+
 PHOTOS_START = "###SEND_PHOTOS:"
 PHOTOS_END = "###"
 
@@ -166,6 +176,21 @@ PHOTO_MARKER_GUIDE = f"""
 если уже отправлял. Если фото
 сейчас не нужны — не добавляй метки вообще."""
 
+UNKNOWN_START = "###UNKNOWN_START###"
+UNKNOWN_END = "###UNKNOWN_END###"
+
+UNKNOWN_MARKER_GUIDE = f"""
+Технический формат вопросов без ответа в базе знаний (обязательно
+соблюдай): когда клиент спрашивает то, чего нет в фактах о проекте или
+в базе возражений (точная цифра, условие, дата, деталь) — сначала как
+обычно скажи клиенту, что уточнишь и вернёшься с ответом, не выдумывай.
+Затем отдельным блоком в конце ответа добавь метку
+{UNKNOWN_START}короткая суть вопроса{UNKNOWN_END} (можно несколько
+меток подряд, если непонятных вопросов было несколько) — она клиенту не
+отправится, а уйдёт Тимуру, чтобы он мог дополнить базу знаний. Пиши
+суть вопроса кратко, одной фразой, без карточки лида. Если ответ есть в
+фактах — не добавляй эту метку."""
+
 LEAD_SYSTEM = f"""{LEAD_MANAGER_CONTENT}
 
 Факты о проекте ЖК Dubai (используй точно, не выдумывай другие цифры,
@@ -173,9 +198,13 @@ LEAD_SYSTEM = f"""{LEAD_MANAGER_CONTENT}
 
 {ZHK_DUBAI_INFO}
 
+{LANGUAGE_GUIDE}
+
 {ESCALATION_MARKER_GUIDE}
 
-{PHOTO_MARKER_GUIDE}"""
+{PHOTO_MARKER_GUIDE}
+
+{UNKNOWN_MARKER_GUIDE}"""
 
 LEAD_GREETING = (
     "Здравствуйте! Это ИИ-помощник отдела продаж ЖК Dubai (S House "
@@ -230,9 +259,20 @@ def split_photo_request(text: str) -> tuple[str, list[str]]:
     return cleaned, categories
 
 
-def get_lead_reply(messages: list[dict]) -> tuple[str, str | None, list[str]]:
-    """Client-facing lead persona. Returns (text to show the client, escalation card or None, photo categories to send)."""
+UNKNOWN_PATTERN = re.compile(re.escape(UNKNOWN_START) + r"(.*?)" + re.escape(UNKNOWN_END))
+
+
+def split_unknown(text: str) -> tuple[str, list[str]]:
+    notes = [m.strip() for m in UNKNOWN_PATTERN.findall(text) if m.strip()]
+    cleaned = UNKNOWN_PATTERN.sub("", text).strip()
+    return cleaned, notes
+
+
+def get_lead_reply(messages: list[dict]) -> tuple[str, str | None, list[str], list[str]]:
+    """Client-facing lead persona. Returns (text to show the client, escalation
+    card or None, photo categories to send, knowledge-gap notes for the owner)."""
     raw = ask_claude(SYSTEM_PROMPTS["lead"], messages)
     text_after_escalation, card = split_escalation(raw)
-    client_text, photo_categories = split_photo_request(text_after_escalation)
-    return client_text, card, photo_categories
+    text_after_photos, photo_categories = split_photo_request(text_after_escalation)
+    client_text, unknown_notes = split_unknown(text_after_photos)
+    return client_text, card, photo_categories, unknown_notes
