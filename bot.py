@@ -160,6 +160,17 @@ async def forward_lead_card(ctx: ContextTypes.DEFAULT_TYPE, update: Update, card
     await ctx.bot.send_message(chat_id=owner_id, text=header + card)
 
 
+async def forward_unknown_question(ctx: ContextTypes.DEFAULT_TYPE, update: Update, note: str):
+    owner_id = load_owner_chat_id()
+    if owner_id is None:
+        return
+    user = update.effective_user
+    contact = f"@{user.username}" if user.username else f"id{user.id}"
+    link = f"https://t.me/{user.username}" if user.username else f"tg://user?id={user.id}"
+    text = f"Бот не знает ответ, стоит дополнить базу знаний:\n{note}\n\nОт {user.full_name} ({contact})\n{link}"
+    await ctx.bot.send_message(chat_id=owner_id, text=text)
+
+
 async def send_photo_category(ctx: ContextTypes.DEFAULT_TYPE, chat_id: int, category: str):
     paths = PHOTO_CATEGORIES.get(category)
     if not paths:
@@ -207,13 +218,18 @@ async def handle_lead_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE, te
     await ctx.bot.send_chat_action(chat_id=chat_id, action="typing")
     try:
         store.setdefault(uid, []).append({"role": "user", "content": update.message.text})
-        client_text, card, photo_categories = get_lead_reply(store[uid])
+        client_text, card, photo_categories, unknown_notes = get_lead_reply(store[uid])
         store[uid].append({"role": "assistant", "content": client_text})
         store[uid] = store[uid][-30:]
         if client_text:
             await reply_long(update, client_text)
         for category in photo_categories:
             await send_photo_category(ctx, chat_id, category)
+        for note in unknown_notes:
+            if test:
+                await update.message.reply_text("[Тест] Ушло бы Тимуру для базы знаний:\n\n" + note)
+            else:
+                await forward_unknown_question(ctx, update, note)
         if not card:
             if not test:
                 schedule_lead_followups(ctx, chat_id, uid)
