@@ -5,7 +5,9 @@
 готовый ответ.
 """
 
+import functools
 import glob
+import logging
 import os
 
 from dotenv import load_dotenv
@@ -16,6 +18,9 @@ from flask import Flask, jsonify, request, send_from_directory
 
 from sales_ai import get_lead_reply
 
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
+log = logging.getLogger(__name__)
+
 BASE_DIR = os.path.dirname(__file__)
 MEDIA_DIR = os.path.join(BASE_DIR, "media")
 
@@ -24,6 +29,16 @@ API_KEY = os.environ["WEBHOOK_API_KEY"]
 app = Flask(__name__)
 
 conversations: dict[str, list[dict]] = {}
+
+
+def require_api_key(view):
+    @functools.wraps(view)
+    def wrapped(*args, **kwargs):
+        if request.headers.get("X-API-Key") != API_KEY:
+            return jsonify({"error": "unauthorized"}), 401
+        return view(*args, **kwargs)
+
+    return wrapped
 
 
 def _files(subdir: str, prefix: str) -> list[str]:
@@ -63,21 +78,25 @@ def media(filepath):
 
 
 @app.post("/api/lead-reply")
+@require_api_key
 def lead_reply():
-    if request.headers.get("X-API-Key") != API_KEY:
-        return jsonify({"error": "unauthorized"}), 401
-
     data = request.get_json(silent=True) or {}
-    lead_id = str(data.get("lead_id", "")).strip()
+    conversation_id = str(data.get("conversation_id", "")).strip()
     message = str(data.get("message", "")).strip()
-    if not lead_id or not message:
-        return jsonify({"error": "lead_id and message are required"}), 400
+    if not conversation_id or not message:
+        return jsonify({"error": "conversation_id and message are required"}), 400
 
-    history = conversations.setdefault(lead_id, [])
+    history = conversations.setdefault(conversation_id, [])
     history.append({"role": "user", "content": message})
-    client_text, escalation_card, photo_categories, unknown_notes = get_lead_reply(history)
+    try:
+        client_text, escalation_card, photo_categories, unknown_notes = get_lead_reply(history)
+    except Exception:
+        history.pop()
+        log.exception("lead_reply failed for conversation_id=%s", conversation_id)
+        return jsonify({"error": "internal_error"}), 500
+
     history.append({"role": "assistant", "content": client_text})
-    conversations[lead_id] = history[-30:]
+    conversations[conversation_id] = history[-30:]
 
     return jsonify(
         {
@@ -88,6 +107,23 @@ def lead_reply():
             "unknown_questions": unknown_notes,
         }
     )
+
+
+@app.post("/api/reset")
+@require_api_key
+def reset_conversation():
+    data = request.get_json(silent=True) or {}
+    conversation_id = str(data.get("conversation_id", "")).strip()
+    if not conversation_id:
+        return jsonify({"error": "conversation_id is required"}), 400
+    conversations.pop(conversation_id, None)
+    return jsonify({"status": "reset"})
+
+
+@app.get("/api/conversation/<conversation_id>")
+@require_api_key
+def get_conversation(conversation_id):
+    return jsonify({"conversation_id": conversation_id, "messages": conversations.get(conversation_id, [])})
 
 
 if __name__ == "__main__":
