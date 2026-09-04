@@ -15,6 +15,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from flask import Flask, jsonify, request, send_from_directory
+from werkzeug.middleware.proxy_fix import ProxyFix
 
 from sales_ai import get_lead_reply
 
@@ -27,6 +28,7 @@ MEDIA_DIR = os.path.join(BASE_DIR, "media")
 API_KEY = os.environ["WEBHOOK_API_KEY"]
 
 app = Flask(__name__)
+app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1)
 
 conversations: dict[str, list[dict]] = {}
 
