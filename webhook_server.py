@@ -7,8 +7,10 @@
 
 import functools
 import glob
+import json
 import logging
 import os
+import sqlite3
 
 from dotenv import load_dotenv
 
@@ -24,13 +26,39 @@ log = logging.getLogger(__name__)
 
 BASE_DIR = os.path.dirname(__file__)
 MEDIA_DIR = os.path.join(BASE_DIR, "media")
+DB_PATH = os.path.join(BASE_DIR, "webhook_conversations.db")
 
 API_KEY = os.environ["WEBHOOK_API_KEY"]
 
 app = Flask(__name__)
 app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1)
 
-conversations: dict[str, list[dict]] = {}
+with sqlite3.connect(DB_PATH) as _conn:
+    _conn.execute(
+        "CREATE TABLE IF NOT EXISTS conversations (conversation_id TEXT PRIMARY KEY, messages TEXT NOT NULL)"
+    )
+
+
+def load_history(conversation_id: str) -> list[dict]:
+    with sqlite3.connect(DB_PATH) as conn:
+        row = conn.execute(
+            "SELECT messages FROM conversations WHERE conversation_id = ?", (conversation_id,)
+        ).fetchone()
+    return json.loads(row[0]) if row else []
+
+
+def save_history(conversation_id: str, messages: list[dict]) -> None:
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.execute(
+            "INSERT INTO conversations (conversation_id, messages) VALUES (?, ?) "
+            "ON CONFLICT(conversation_id) DO UPDATE SET messages = excluded.messages",
+            (conversation_id, json.dumps(messages, ensure_ascii=False)),
+        )
+
+
+def delete_history(conversation_id: str) -> None:
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.execute("DELETE FROM conversations WHERE conversation_id = ?", (conversation_id,))
 
 
 def require_api_key(view):
@@ -88,17 +116,16 @@ def lead_reply():
     if not conversation_id or not message:
         return jsonify({"error": "conversation_id and message are required"}), 400
 
-    history = conversations.setdefault(conversation_id, [])
+    history = load_history(conversation_id)
     history.append({"role": "user", "content": message})
     try:
         client_text, escalation_card, photo_categories, unknown_notes = get_lead_reply(history)
     except Exception:
-        history.pop()
         log.exception("lead_reply failed for conversation_id=%s", conversation_id)
         return jsonify({"error": "internal_error"}), 500
 
     history.append({"role": "assistant", "content": client_text})
-    conversations[conversation_id] = history[-30:]
+    save_history(conversation_id, history[-30:])
 
     return jsonify(
         {
@@ -118,14 +145,35 @@ def reset_conversation():
     conversation_id = str(data.get("conversation_id", "")).strip()
     if not conversation_id:
         return jsonify({"error": "conversation_id is required"}), 400
-    conversations.pop(conversation_id, None)
+    delete_history(conversation_id)
     return jsonify({"status": "reset"})
 
 
 @app.get("/api/conversation/<conversation_id>")
 @require_api_key
 def get_conversation(conversation_id):
-    return jsonify({"conversation_id": conversation_id, "messages": conversations.get(conversation_id, [])})
+    return jsonify({"conversation_id": conversation_id, "messages": load_history(conversation_id)})
+
+
+@app.post("/api/conversation/<conversation_id>/sync")
+@require_api_key
+def sync_conversation(conversation_id):
+    """Replace stored history with messages CRM knows about (e.g. what a
+    human manager said while the bot was off this dialogue), so the bot has
+    real context if it's handed the conversation back later."""
+    data = request.get_json(silent=True) or {}
+    messages = data.get("messages")
+    if not isinstance(messages, list):
+        return jsonify({"error": "messages must be a list"}), 400
+
+    cleaned = []
+    for m in messages:
+        if not isinstance(m, dict) or m.get("role") not in ("user", "assistant"):
+            return jsonify({"error": "each message needs role 'user' or 'assistant' and content"}), 400
+        cleaned.append({"role": m["role"], "content": str(m.get("content", ""))})
+
+    save_history(conversation_id, cleaned[-30:])
+    return jsonify({"status": "synced", "message_count": len(cleaned[-30:])})
 
 
 if __name__ == "__main__":
