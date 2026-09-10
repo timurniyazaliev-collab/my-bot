@@ -5,12 +5,14 @@
 готовый ответ.
 """
 
+import datetime
 import functools
 import glob
 import json
 import logging
 import os
 import sqlite3
+import time
 
 from dotenv import load_dotenv
 
@@ -35,8 +37,18 @@ app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1)
 
 with sqlite3.connect(DB_PATH) as _conn:
     _conn.execute(
-        "CREATE TABLE IF NOT EXISTS conversations (conversation_id TEXT PRIMARY KEY, messages TEXT NOT NULL)"
+        "CREATE TABLE IF NOT EXISTS conversations "
+        "(conversation_id TEXT PRIMARY KEY, messages TEXT NOT NULL, created_at INTEGER)"
     )
+    _conn.execute(
+        "CREATE TABLE IF NOT EXISTS unknown_questions "
+        "(id INTEGER PRIMARY KEY AUTOINCREMENT, conversation_id TEXT NOT NULL, "
+        "question TEXT NOT NULL, created_at INTEGER NOT NULL)"
+    )
+    try:
+        _conn.execute("ALTER TABLE conversations ADD COLUMN created_at INTEGER")
+    except sqlite3.OperationalError:
+        pass
 
 
 def load_history(conversation_id: str) -> list[dict]:
@@ -50,15 +62,33 @@ def load_history(conversation_id: str) -> list[dict]:
 def save_history(conversation_id: str, messages: list[dict]) -> None:
     with sqlite3.connect(DB_PATH) as conn:
         conn.execute(
-            "INSERT INTO conversations (conversation_id, messages) VALUES (?, ?) "
+            "INSERT INTO conversations (conversation_id, messages, created_at) VALUES (?, ?, ?) "
             "ON CONFLICT(conversation_id) DO UPDATE SET messages = excluded.messages",
-            (conversation_id, json.dumps(messages, ensure_ascii=False)),
+            (conversation_id, json.dumps(messages, ensure_ascii=False), int(time.time())),
         )
 
 
 def delete_history(conversation_id: str) -> None:
     with sqlite3.connect(DB_PATH) as conn:
         conn.execute("DELETE FROM conversations WHERE conversation_id = ?", (conversation_id,))
+        conn.execute("DELETE FROM unknown_questions WHERE conversation_id = ?", (conversation_id,))
+
+
+def log_unknown_questions(conversation_id: str, notes: list[str]) -> None:
+    if not notes:
+        return
+    now = int(time.time())
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.executemany(
+            "INSERT INTO unknown_questions (conversation_id, question, created_at) VALUES (?, ?, ?)",
+            [(conversation_id, note, now) for note in notes],
+        )
+
+
+def _day_bounds(date_str: str | None) -> tuple[int, int]:
+    day = datetime.date.fromisoformat(date_str) if date_str else datetime.date.today()
+    start = int(datetime.datetime.combine(day, datetime.time.min).timestamp())
+    return start, start + 86400
 
 
 def require_api_key(view):
@@ -126,6 +156,7 @@ def lead_reply():
 
     history.append({"role": "assistant", "content": client_text})
     save_history(conversation_id, history[-30:])
+    log_unknown_questions(conversation_id, unknown_notes)
 
     return jsonify(
         {
@@ -174,6 +205,72 @@ def sync_conversation(conversation_id):
 
     save_history(conversation_id, cleaned[-30:])
     return jsonify({"status": "synced", "message_count": len(cleaned[-30:])})
+
+
+@app.get("/api/stats")
+@require_api_key
+def stats():
+    date_str = request.args.get("date")
+    start, end = _day_bounds(date_str)
+    with sqlite3.connect(DB_PATH) as conn:
+        new_conversations = conn.execute(
+            "SELECT COUNT(*) FROM conversations WHERE created_at >= ? AND created_at < ?", (start, end)
+        ).fetchone()[0]
+        unknown_count = conn.execute(
+            "SELECT COUNT(*) FROM unknown_questions WHERE created_at >= ? AND created_at < ?", (start, end)
+        ).fetchone()[0]
+    return jsonify(
+        {
+            "date": date_str or datetime.date.today().isoformat(),
+            "new_conversations": new_conversations,
+            "unknown_questions": unknown_count,
+        }
+    )
+
+
+@app.get("/api/conversations")
+@require_api_key
+def list_conversations():
+    date_str = request.args.get("date")
+    with sqlite3.connect(DB_PATH) as conn:
+        if date_str:
+            start, end = _day_bounds(date_str)
+            rows = conn.execute(
+                "SELECT conversation_id, messages, created_at FROM conversations "
+                "WHERE created_at >= ? AND created_at < ? ORDER BY created_at DESC",
+                (start, end),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT conversation_id, messages, created_at FROM conversations "
+                "ORDER BY created_at DESC LIMIT 100"
+            ).fetchall()
+    return jsonify(
+        [
+            {"conversation_id": r[0], "message_count": len(json.loads(r[1])), "created_at": r[2]}
+            for r in rows
+        ]
+    )
+
+
+@app.get("/api/unknown-questions")
+@require_api_key
+def list_unknown_questions():
+    date_str = request.args.get("date")
+    with sqlite3.connect(DB_PATH) as conn:
+        if date_str:
+            start, end = _day_bounds(date_str)
+            rows = conn.execute(
+                "SELECT conversation_id, question, created_at FROM unknown_questions "
+                "WHERE created_at >= ? AND created_at < ? ORDER BY created_at DESC",
+                (start, end),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT conversation_id, question, created_at FROM unknown_questions "
+                "ORDER BY created_at DESC LIMIT 200"
+            ).fetchall()
+    return jsonify([{"conversation_id": r[0], "question": r[1], "created_at": r[2]} for r in rows])
 
 
 if __name__ == "__main__":
