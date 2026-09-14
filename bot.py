@@ -1,4 +1,3 @@
-import asyncio
 import glob
 import os, logging
 from datetime import time as dt_time, timezone, timedelta
@@ -13,15 +12,12 @@ load_dotenv()
 from telegram import BotCommand, BotCommandScopeChat, InputMediaPhoto, ReplyKeyboardMarkup, Update
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
 
-import wb_report_file
-import wb_sync
 from sales_ai import ask_claude, get_reply, get_lead_reply, MARKETER_SYSTEM, LEAD_GREETING
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 log = logging.getLogger(__name__)
 
 history: dict[int, list[dict]] = {}
-last_wb_report: dict[int, dict] = {}
 user_mode: dict[int, str] = {}
 test_history: dict[int, list[dict]] = {}
 testing_lead: set[int] = set()
@@ -81,9 +77,6 @@ BOT_COMMANDS = [
     BotCommand("post", "Готовый пост для соцсетей"),
     BotCommand("reels", "Сценарий для рилса"),
     BotCommand("sales", "Скрипты продаж и возражения"),
-    BotCommand("wb_preview", "Черновик сводного отчёта WB за неделю (только в чат)"),
-    BotCommand("wb_apply", "Записать в таблицу цифры из последнего файла WB"),
-    BotCommand("wb_sync", "Синхронизировать отчёты WB с Google Таблицами"),
     BotCommand("test_client", "Посмотреть на бота глазами клиента (тест)"),
     BotCommand("end_test", "Выйти из режима теста"),
     BotCommand("reset", "Очистить историю диалога"),
@@ -95,7 +88,6 @@ MAIN_KEYBOARD = ReplyKeyboardMarkup(
         ["/mentions", "/idea"],
         ["/post", "/reels"],
         ["/sales", "/reset"],
-        ["/wb_preview", "/wb_apply"],
         ["/test_client", "/end_test"],
     ],
     resize_keyboard=True,
@@ -188,12 +180,6 @@ async def send_photo_category(ctx: ContextTypes.DEFAULT_TYPE, chat_id: int, cate
 async def reply_long(update: Update, text: str):
     for i in range(0, len(text), TELEGRAM_MAX_LEN):
         await update.message.reply_text(text[i:i + TELEGRAM_MAX_LEN])
-
-
-async def reply_table(update: Update, table: str):
-    chunk_size = TELEGRAM_MAX_LEN - 8  # leave room for the ```\n ... \n``` fence
-    for i in range(0, len(table), chunk_size):
-        await update.message.reply_text(f"```\n{table[i:i + chunk_size]}\n```", parse_mode="Markdown")
 
 
 async def run_command(update: Update, ctx: ContextTypes.DEFAULT_TYPE, mode: str, prompt: str, error_msg: str):
@@ -426,77 +412,6 @@ async def sales(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await run_command(update, ctx, "sales", prompt, "Не получилось собрать ответ. Попробуй ещё раз.")
 
 
-@owner_only
-async def wb_sync_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        "Запись в таблицу пока отключена — она затирала нулями реальные цифры, "
-        "когда не могла получить данные от WB. Используй /wb_preview, чтобы свериться, "
-        "прежде чем включим запись обратно."
-    )
-
-
-@owner_only
-async def wb_preview_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    await ctx.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
-    await update.message.reply_text("Считаю черновик по неделе, это может занять минуту...")
-    try:
-        table, note = await asyncio.to_thread(wb_sync.preview_week)
-        await reply_table(update, table)
-        await update.message.reply_text(note)
-    except KeyError as e:
-        await update.message.reply_text(
-            f"Не настроена переменная окружения {e} в .env на сервере. "
-            "Нужны WB_API_TOKEN, GOOGLE_SHEET_ID и файл google_service_account.json."
-        )
-    except Exception:
-        log.exception("wb_preview command error")
-        await update.message.reply_text("Не получилось посчитать черновик. Попробуй ещё раз позже.")
-
-
-async def wb_report_document(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    if not is_owner_chat(update.effective_chat.id):
-        return
-    doc = update.message.document
-    if not doc.file_name.lower().endswith(".xlsx"):
-        return
-    uid = update.effective_user.id
-    await ctx.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
-    try:
-        tg_file = await ctx.bot.get_file(doc.file_id)
-        path = os.path.join(BASE_DIR, f"wb_report_{uid}.xlsx")
-        await tg_file.download_to_drive(path)
-        by_date = await asyncio.to_thread(wb_report_file.parse_summary_report, path)
-        last_wb_report[uid] = by_date
-        table, note = wb_report_file.format_preview(by_date)
-        if table:
-            await reply_table(update, table)
-        await update.message.reply_text(note)
-    except Exception:
-        log.exception("wb_report_document error")
-        await update.message.reply_text("Не получилось разобрать файл. Проверь, что это выгрузка «Сводного по продавцу», и попробуй ещё раз.")
-
-
-@owner_only
-async def wb_apply_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    uid = update.effective_user.id
-    by_date = last_wb_report.get(uid)
-    if not by_date:
-        await update.message.reply_text("Сначала пришли файл выгрузки «Сводного по продавцу» (.xlsx).")
-        return
-    await update.message.reply_text("Записываю в таблицу...")
-    try:
-        summary = await asyncio.to_thread(wb_sync.apply_report_file, by_date)
-        await update.message.reply_text("Готово:\n\n" + summary)
-    except KeyError as e:
-        await update.message.reply_text(
-            f"Не настроена переменная окружения {e} в .env на сервере. "
-            "Нужны GOOGLE_SHEET_ID и файл google_service_account.json."
-        )
-    except Exception:
-        log.exception("wb_apply command error")
-        await update.message.reply_text("Не получилось записать в таблицу. Попробуй ещё раз позже.")
-
-
 async def daily_news_digest(ctx: ContextTypes.DEFAULT_TYPE):
     chat_id = load_owner_chat_id()
     if chat_id is None:
@@ -534,12 +449,8 @@ def main():
     app.add_handler(CommandHandler("post", post))
     app.add_handler(CommandHandler("reels", reels))
     app.add_handler(CommandHandler("sales", sales))
-    app.add_handler(CommandHandler("wb_sync", wb_sync_cmd))
-    app.add_handler(CommandHandler("wb_preview", wb_preview_cmd))
-    app.add_handler(CommandHandler("wb_apply", wb_apply_cmd))
     app.add_handler(CommandHandler("test_client", test_client_cmd))
     app.add_handler(CommandHandler("end_test", end_test_cmd))
-    app.add_handler(MessageHandler(filters.Document.ALL, wb_report_document))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, chat))
     log.info("Bot started")
     app.run_polling()

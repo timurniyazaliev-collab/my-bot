@@ -143,8 +143,13 @@ def lead_reply():
     data = request.get_json(silent=True) or {}
     conversation_id = str(data.get("conversation_id", "")).strip()
     message = str(data.get("message", "")).strip()
-    if not conversation_id or not message:
-        return jsonify({"error": "conversation_id and message are required"}), 400
+    if not conversation_id:
+        return jsonify({"error": "conversation_id is required"}), 400
+    if not message:
+        message = (
+            "(клиент отправил сообщение без текста — вероятно, переслал пост, "
+            "reels или карусель по рекламе, ничего не написав от себя)"
+        )
 
     history = load_history(conversation_id)
     history.append({"role": "user", "content": message})
