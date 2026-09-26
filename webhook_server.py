@@ -21,6 +21,7 @@ load_dotenv()
 from flask import Flask, jsonify, request, send_from_directory
 from werkzeug.middleware.proxy_fix import ProxyFix
 
+import review_store
 from sales_ai import get_lead_reply
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
@@ -31,6 +32,10 @@ MEDIA_DIR = os.path.join(BASE_DIR, "media")
 DB_PATH = os.path.join(BASE_DIR, "webhook_conversations.db")
 
 API_KEY = os.environ["WEBHOOK_API_KEY"]
+# Отдельный ключ для агента ежедневного разбора диалогов: только чтение
+# диалогов и сообщения владельцу в Telegram, писать клиентам и сбрасывать
+# историю им нельзя. Необязательный — без него адреса /api/review/* закрыты.
+REVIEW_API_KEY = os.environ.get("REVIEW_API_KEY")
 
 app = Flask(__name__)
 app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1)
@@ -50,6 +55,8 @@ with sqlite3.connect(DB_PATH) as _conn:
     except sqlite3.OperationalError:
         pass
 
+review_store.init_db()
+
 
 def load_history(conversation_id: str) -> list[dict]:
     with sqlite3.connect(DB_PATH) as conn:
@@ -66,6 +73,7 @@ def save_history(conversation_id: str, messages: list[dict]) -> None:
             "ON CONFLICT(conversation_id) DO UPDATE SET messages = excluded.messages",
             (conversation_id, json.dumps(messages, ensure_ascii=False), int(time.time())),
         )
+    review_store.mark_active(conversation_id)
 
 
 def delete_history(conversation_id: str) -> None:
@@ -95,6 +103,16 @@ def require_api_key(view):
     @functools.wraps(view)
     def wrapped(*args, **kwargs):
         if request.headers.get("X-API-Key") != API_KEY:
+            return jsonify({"error": "unauthorized"}), 401
+        return view(*args, **kwargs)
+
+    return wrapped
+
+
+def require_review_key(view):
+    @functools.wraps(view)
+    def wrapped(*args, **kwargs):
+        if not REVIEW_API_KEY or request.headers.get("X-API-Key") != REVIEW_API_KEY:
             return jsonify({"error": "unauthorized"}), 401
         return view(*args, **kwargs)
 
@@ -162,6 +180,8 @@ def lead_reply():
     history.append({"role": "assistant", "content": client_text})
     save_history(conversation_id, history[-30:])
     log_unknown_questions(conversation_id, unknown_notes)
+    if escalation_card is not None:
+        review_store.log_escalation(conversation_id)
 
     return jsonify(
         {
@@ -276,6 +296,47 @@ def list_unknown_questions():
                 "ORDER BY created_at DESC LIMIT 200"
             ).fetchall()
     return jsonify([{"conversation_id": r[0], "question": r[1], "created_at": r[2]} for r in rows])
+
+
+@app.get("/api/review/dialogs")
+@require_review_key
+def review_dialogs():
+    """Все диалоги, в которых была активность в этот день (по Бишкеку), целиком,
+    с обезличенной меткой вместо conversation_id. По умолчанию — вчера."""
+    day = request.args.get("date")
+    if day:
+        try:
+            datetime.date.fromisoformat(day)
+        except ValueError:
+            return jsonify({"error": "date must be YYYY-MM-DD"}), 400
+    else:
+        day = (datetime.date.fromisoformat(review_store.today()) - datetime.timedelta(days=1)).isoformat()
+    dialogs = review_store.dialogs_for_day(day)
+    return jsonify({"date": day, "count": len(dialogs), "dialogs": dialogs})
+
+
+@app.post("/api/review/message")
+@require_review_key
+def review_message():
+    """Сообщение от агента разбора владельцу в Telegram.
+    dedupe_key — не отправлять повторно (например, "report:2026-09-25");
+    review_date — владелец сможет ответить реплаем, ответ уйдёт агенту."""
+    data = request.get_json(silent=True) or {}
+    text = str(data.get("text", "")).strip()
+    dedupe_key = str(data.get("dedupe_key", "")).strip() or None
+    review_date = str(data.get("review_date", "")).strip() or None
+    if not text:
+        return jsonify({"error": "text is required"}), 400
+    if dedupe_key and not review_store.claim_dedupe_key(dedupe_key):
+        return jsonify({"status": "already_sent"})
+    try:
+        ids = review_store.send_to_owner(text, review_date)
+    except Exception:
+        log.exception("review message send failed")
+        if dedupe_key:
+            review_store.release_dedupe_key(dedupe_key)
+        return jsonify({"error": "send_failed"}), 502
+    return jsonify({"status": "sent", "message_count": len(ids)})
 
 
 if __name__ == "__main__":

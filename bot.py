@@ -1,3 +1,4 @@
+import asyncio
 import glob
 import os, logging
 from datetime import time as dt_time, timezone, timedelta
@@ -12,6 +13,7 @@ load_dotenv()
 from telegram import BotCommand, BotCommandScopeChat, InputMediaPhoto, ReplyKeyboardMarkup, Update
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
 
+import review_store
 from sales_ai import ask_claude, get_reply, get_lead_reply, MARKETER_SYSTEM, LEAD_GREETING
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
@@ -276,10 +278,33 @@ async def reset(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("История очищена, начнём заново.")
 
 
+async def handle_review_reply(update: Update, review_date: str):
+    """Ответ владельца на отчёт разбора диалогов — передаём агенту,
+    который применит подтверждённые правки (см. AUTONOMY-PASSPORT.html)."""
+    if not (os.environ.get("REVIEW_APPLY_ROUTINE_URL") and os.environ.get("REVIEW_APPLY_ROUTINE_TOKEN")):
+        await update.message.reply_text(
+            "Приём ответов на разбор ещё не настроен — ответь в сессии Claude, где пришёл отчёт."
+        )
+        return
+    text = f"Разбор диалогов за {review_date}. Ответ владельца на отчёт:\n\n{update.message.text}"
+    try:
+        await asyncio.to_thread(review_store.fire_apply_routine, text)
+    except Exception:
+        log.exception("review apply routine fire failed")
+        await update.message.reply_text("Не получилось передать ответ агенту. Попробуй ещё раз чуть позже.")
+        return
+    await update.message.reply_text("Принял, передал агенту. Когда правки будут на сервере — напишу.")
+
+
 async def chat(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     uid = update.effective_user.id
     if is_owner_chat(chat_id):
+        replied = update.message.reply_to_message
+        review_date = review_store.review_date_for_reply(replied.message_id) if replied else None
+        if review_date:
+            await handle_review_reply(update, review_date)
+            return
         if uid in testing_lead:
             await handle_lead_message(update, ctx, test=True)
             return
