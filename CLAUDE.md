@@ -81,6 +81,17 @@ requirements.txt.
   файлы в новую подпапку `media/...` и прописать её в `bot.py`
   (`PHOTO_CATEGORIES`) и `sales_ai.py` (`PHOTO_CATEGORIES_AVAILABLE`).
 
+## Ежедневный разбор диалогов (агент)
+
+Облачный агент (Claude Code Routine) каждое утро читает вчерашние
+диалоги вебхука (`/api/review/dialogs`, отдельный ключ только для
+чтения), шлёт владельцу отчёт в Telegram через `/api/review/message`,
+а по реплаю владельца второй Routine применяет подтверждённые правки в
+`lead_manager.md`/`zhk_dubai.md`. Хранилище — `review_store.py`,
+способ работы агента — `.claude/skills/dialog-review/SKILL.md`, журнал
+решений — `review/decisions.md`, настройка — `REVIEW_SETUP.md`, общий
+план — `AUTONOMY-PASSPORT.html`.
+
 ## Другие каналы (WhatsApp, Instagram, Facebook, сайт)
 
 Планируется подключить тот же ИИ-менеджер (`sales_ai.py`) к другим
