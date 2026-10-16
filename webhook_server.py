@@ -134,6 +134,7 @@ PHOTO_FILES = {
     "plan_3k_95": _files("plans", "plan_3k_95"),
     "plan_4k": _files("plans", "plan_4k"),
     "plan_penthouse": _files("plans", "plan_penthouse"),
+    "plan_commercial": _files("plans", "plan_commercial"),
 }
 
 
