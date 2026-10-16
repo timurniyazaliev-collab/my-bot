@@ -47,6 +47,9 @@ PHOTO_CATEGORIES = {
     "plan_4k": _plan_files("plan_4k"),
     "plan_penthouse": _plan_files("plan_penthouse"),
     "plan_commercial": _plan_files("plan_commercial"),
+    "plan_floor_low": _plan_files("plan_floor_low"),
+    "plan_floor_mid": _plan_files("plan_floor_mid"),
+    "plan_floor_high": _plan_files("plan_floor_high"),
 }
 
 OWNER_CHAT_ID_PATH = os.path.join(BASE_DIR, "owner_chat_id.txt")
