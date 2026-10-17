@@ -165,6 +165,7 @@ def lead_reply():
     data = request.get_json(silent=True) or {}
     conversation_id = str(data.get("conversation_id", "")).strip()
     message = str(data.get("message", "")).strip()
+    channel = str(data.get("channel", "")).strip() or None
     if not conversation_id:
         return jsonify({"error": "conversation_id is required"}), 400
     if not message:
@@ -176,7 +177,9 @@ def lead_reply():
     history = load_history(conversation_id)
     history.append({"role": "user", "content": message})
     try:
-        client_text, escalation_card, photo_categories, unknown_notes = get_lead_reply(history)
+        client_text, escalation_card, photo_categories, unknown_notes = get_lead_reply(
+            history, channel=channel
+        )
     except Exception:
         log.exception("lead_reply failed for conversation_id=%s", conversation_id)
         return jsonify({"error": "internal_error"}), 500
