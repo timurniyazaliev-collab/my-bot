@@ -309,10 +309,42 @@ def split_unknown(text: str) -> tuple[str, list[str]]:
     return cleaned, notes
 
 
-def get_lead_reply(messages: list[dict]) -> tuple[str, str | None, list[str], list[str]]:
+CHANNEL_NOTES = {
+    "whatsapp": (
+        "\n\nКанал этого диалога: WhatsApp. Номер телефона клиента уже "
+        "известен менеджеру через CRM самим фактом переписки в WhatsApp "
+        "(это и есть его WhatsApp) — НЕ проси его оставить/продиктовать "
+        "номер WhatsApp, это будет выглядеть странно для клиента. Веди "
+        "диалог сразу к записи на показ/приглашению в офис."
+    ),
+    "instagram": (
+        "\n\nКанал этого диалога: Instagram. Номера телефона/WhatsApp у "
+        "менеджера нет — обязательно спроси его сам в рамках квалификации "
+        "(см. правило про WhatsApp в базе), это ускоряет первый контакт "
+        "менеджера с клиентом на часы."
+    ),
+    "facebook": (
+        "\n\nКанал этого диалога: Facebook Messenger. Номера телефона/"
+        "WhatsApp у менеджера нет — обязательно спроси его сам в рамках "
+        "квалификации."
+    ),
+}
+
+
+def get_lead_reply(
+    messages: list[dict], channel: str | None = None
+) -> tuple[str, str | None, list[str], list[str]]:
     """Client-facing lead persona. Returns (text to show the client, escalation
-    card or None, photo categories to send, knowledge-gap notes for the owner)."""
-    raw = ask_claude(SYSTEM_PROMPTS["lead"], messages)
+    card or None, photo categories to send, knowledge-gap notes for the owner).
+
+    `channel` — optional source channel of this conversation ("whatsapp",
+    "instagram", "facebook"), if the caller (e.g. CRM webhook) knows it.
+    """
+    system_prompt = SYSTEM_PROMPTS["lead"]
+    note = CHANNEL_NOTES.get((channel or "").strip().lower())
+    if note:
+        system_prompt += note
+    raw = ask_claude(system_prompt, messages)
     text_after_escalation, card = split_escalation(raw)
     text_after_photos, photo_categories = split_photo_request(text_after_escalation)
     client_text, unknown_notes = split_unknown(text_after_photos)
