@@ -12,6 +12,7 @@ import json
 import logging
 import os
 import sqlite3
+import threading
 import time
 
 from dotenv import load_dotenv
@@ -54,8 +55,23 @@ with sqlite3.connect(DB_PATH) as _conn:
         _conn.execute("ALTER TABLE conversations ADD COLUMN created_at INTEGER")
     except sqlite3.OperationalError:
         pass
+    try:
+        _conn.execute("ALTER TABLE conversations ADD COLUMN updated_at INTEGER")
+    except sqlite3.OperationalError:
+        pass
+    _conn.execute(
+        "CREATE TABLE IF NOT EXISTS stale_notified "
+        "(conversation_id TEXT PRIMARY KEY, notified_at INTEGER NOT NULL)"
+    )
 
 review_store.init_db()
+
+# Если лид молчит столько дней подряд, а бот ещё сам ведёт диалог (не
+# передан менеджеру) — раз в STALE_CHECK_INTERVAL_SECONDS проверяем и
+# шлём владельцу уведомление в Telegram (написать лиду первым бот не
+# может — нет исходящего API через CRM, см. CRM_INTEGRATION.md).
+STALE_LEAD_DAYS = 5
+STALE_CHECK_INTERVAL_SECONDS = 3600
 
 
 def load_history(conversation_id: str) -> list[dict]:
@@ -67,12 +83,18 @@ def load_history(conversation_id: str) -> list[dict]:
 
 
 def save_history(conversation_id: str, messages: list[dict]) -> None:
+    now = int(time.time())
     with sqlite3.connect(DB_PATH) as conn:
         conn.execute(
-            "INSERT INTO conversations (conversation_id, messages, created_at) VALUES (?, ?, ?) "
-            "ON CONFLICT(conversation_id) DO UPDATE SET messages = excluded.messages",
-            (conversation_id, json.dumps(messages, ensure_ascii=False), int(time.time())),
+            "INSERT INTO conversations (conversation_id, messages, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?) ON CONFLICT(conversation_id) DO UPDATE SET "
+            "messages = excluded.messages, updated_at = excluded.updated_at",
+            (conversation_id, json.dumps(messages, ensure_ascii=False), now, now),
         )
+        # Диалог снова живой — если раньше уходило уведомление "молчит N
+        # дней", оно больше не актуально, разрешаем отправить его заново,
+        # если лид опять замолчит в будущем.
+        conn.execute("DELETE FROM stale_notified WHERE conversation_id = ?", (conversation_id,))
     review_store.mark_active(conversation_id)
 
 
@@ -91,6 +113,64 @@ def log_unknown_questions(conversation_id: str, notes: list[str]) -> None:
             "INSERT INTO unknown_questions (conversation_id, question, created_at) VALUES (?, ?, ?)",
             [(conversation_id, note, now) for note in notes],
         )
+
+
+def _last_user_message(messages: list[dict]) -> str:
+    for m in reversed(messages):
+        if m.get("role") == "user":
+            return str(m.get("content", ""))[:200]
+    return ""
+
+
+def check_stale_leads() -> None:
+    """Лиды, по которым бот давно не получал сообщений и которые ещё не
+    передавались менеджеру — шлёт владельцу уведомление в Telegram один
+    раз на каждый период молчания (см. save_history про сброс флага)."""
+    cutoff = int(time.time()) - STALE_LEAD_DAYS * 86400
+    with sqlite3.connect(DB_PATH) as conn:
+        rows = conn.execute(
+            "SELECT conversation_id, messages, updated_at FROM conversations "
+            "WHERE updated_at IS NOT NULL AND updated_at < ? "
+            "AND conversation_id NOT IN (SELECT conversation_id FROM escalations) "
+            "AND conversation_id NOT IN (SELECT conversation_id FROM stale_notified)",
+            (cutoff,),
+        ).fetchall()
+
+    for conversation_id, messages_json, updated_at in rows:
+        with sqlite3.connect(DB_PATH) as conn:
+            cur = conn.execute(
+                "INSERT OR IGNORE INTO stale_notified (conversation_id, notified_at) VALUES (?, ?)",
+                (conversation_id, int(time.time())),
+            )
+            claimed = cur.rowcount == 1
+        if not claimed:
+            continue  # другой процесс/поток уже отправил уведомление по этому диалогу
+
+        days_silent = (int(time.time()) - updated_at) // 86400
+        last_message = _last_user_message(json.loads(messages_json))
+        text = (
+            f"⏳ Лид молчит уже {days_silent} дн. (диалог в CRM: {conversation_id}).\n"
+            "Бот ещё сам ведёт диалог, менеджеру не передавался.\n"
+        )
+        if last_message:
+            text += f"Последнее сообщение клиента: «{last_message}»\n"
+        text += "Бот не может написать первым через CRM — если ещё актуально, напиши сам."
+        try:
+            review_store.send_to_owner(text, None)
+        except Exception:
+            log.exception("failed to notify owner about stale lead %s", conversation_id)
+
+
+def _stale_lead_loop() -> None:
+    while True:
+        try:
+            check_stale_leads()
+        except Exception:
+            log.exception("stale lead check failed")
+        time.sleep(STALE_CHECK_INTERVAL_SECONDS)
+
+
+threading.Thread(target=_stale_lead_loop, daemon=True).start()
 
 
 def _day_bounds(date_str: str | None) -> tuple[int, int]:
@@ -189,6 +269,15 @@ def lead_reply():
     log_unknown_questions(conversation_id, unknown_notes)
     if escalation_card is not None:
         review_store.log_escalation(conversation_id)
+        channel_label = f" · канал: {channel}" if channel else ""
+        notify_text = (
+            f"🔔 Лид готов к передаче менеджеру (CRM, диалог: {conversation_id}{channel_label})\n\n"
+            f"{escalation_card}"
+        )
+        try:
+            review_store.send_to_owner(notify_text, None)
+        except Exception:
+            log.exception("failed to notify owner about CRM escalation for conversation_id=%s", conversation_id)
 
     return jsonify(
         {
