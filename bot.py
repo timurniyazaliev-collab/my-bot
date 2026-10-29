@@ -102,6 +102,7 @@ MAIN_KEYBOARD = ReplyKeyboardMarkup(
 DAILY_DIGEST_UTC_TIME = dt_time(hour=3, minute=0, tzinfo=timezone.utc)  # 09:00 Бишкек
 
 LEAD_NUDGE_DELAY = timedelta(hours=24)
+LEAD_NUDGE2_DELAY = timedelta(hours=60)
 LEAD_SILENCE_ESCALATE_DELAY = timedelta(days=3)
 
 
@@ -110,7 +111,7 @@ def _lead_job_name(kind: str, uid: int) -> str:
 
 
 def cancel_lead_followups(ctx: ContextTypes.DEFAULT_TYPE, uid: int):
-    for kind in ("nudge", "silence"):
+    for kind in ("nudge", "nudge2", "silence"):
         for job in ctx.job_queue.get_jobs_by_name(_lead_job_name(kind, uid)):
             job.schedule_removal()
 
@@ -119,6 +120,9 @@ def schedule_lead_followups(ctx: ContextTypes.DEFAULT_TYPE, chat_id: int, uid: i
     cancel_lead_followups(ctx, uid)
     ctx.job_queue.run_once(
         lead_nudge_job, LEAD_NUDGE_DELAY, chat_id=chat_id, name=_lead_job_name("nudge", uid), data={"uid": uid}
+    )
+    ctx.job_queue.run_once(
+        lead_nudge2_job, LEAD_NUDGE2_DELAY, chat_id=chat_id, name=_lead_job_name("nudge2", uid), data={"uid": uid}
     )
     ctx.job_queue.run_once(
         lead_silence_escalate_job,
@@ -134,6 +138,21 @@ async def lead_nudge_job(ctx: ContextTypes.DEFAULT_TYPE):
         chat_id=ctx.job.chat_id,
         text="Добрый день! Остались ли у вас вопросы по ЖК Dubai, или что-то заинтересовало в презентации?",
     )
+
+
+async def lead_nudge2_job(ctx: ContextTypes.DEFAULT_TYPE):
+    chat_id = ctx.job.chat_id
+    await ctx.bot.send_message(
+        chat_id=chat_id,
+        text=(
+            "Если ещё актуально — вот свежие фото комплекса. Напомню: "
+            "первоначальный взнос 30%, дальше рассрочка от застройщика на "
+            "24 месяца без банка и переплат. Могу сразу посчитать точный "
+            "график под вашу комнатность, или проще созвониться на 5 минут "
+            "— как удобнее."
+        ),
+    )
+    await send_photo_category(ctx, chat_id, "exterior_hero")
 
 
 async def lead_silence_escalate_job(ctx: ContextTypes.DEFAULT_TYPE):
