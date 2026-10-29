@@ -277,7 +277,7 @@ SEARCH_MODES = {"marketer"}
 WEB_SEARCH_TOOL = {"type": "web_search_20260209", "name": "web_search", "max_uses": 10}
 
 
-def ask_claude(system_prompt: str, messages: list[dict], use_search: bool = False) -> str:
+def ask_claude(system_prompt: str | list[dict], messages: list[dict], use_search: bool = False) -> str:
     response = claude.messages.create(
         model="claude-opus-5",
         max_tokens=2048,
@@ -352,10 +352,23 @@ def get_lead_reply(
     `channel` — optional source channel of this conversation ("whatsapp",
     "instagram", "facebook"), if the caller (e.g. CRM webhook) knows it.
     """
-    system_prompt = SYSTEM_PROMPTS["lead"]
+    # Системный промпт (lead_manager.md + zhk_dubai.md + тех. гайды) —
+    # статический текст, который меняется только когда Тимур правит файлы
+    # на GitHub. Кэшируем его отдельным блоком (TTL 1 час), чтобы не платить
+    # полную цену за ~700 строк на каждое сообщение каждого лида. Приписка
+    # про канал (WhatsApp/Instagram) — переменная часть, отдельным
+    # некэшируемым блоком ПОСЛЕ кэшированного, чтобы разные каналы не сбивали
+    # кэш общего промпта.
+    system_prompt: list[dict] = [
+        {
+            "type": "text",
+            "text": SYSTEM_PROMPTS["lead"],
+            "cache_control": {"type": "ephemeral", "ttl": "1h"},
+        }
+    ]
     note = CHANNEL_NOTES.get((channel or "").strip().lower())
     if note:
-        system_prompt += note
+        system_prompt.append({"type": "text", "text": note.lstrip()})
     raw = ask_claude(system_prompt, messages)
     text_after_escalation, card = split_escalation(raw)
     text_after_photos, photo_categories = split_photo_request(text_after_escalation)
