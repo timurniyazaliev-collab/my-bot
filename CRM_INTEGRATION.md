@@ -72,7 +72,7 @@
 {
   "messages": [
     {"role": "user", "content": "Здравствуйте, ещё интересует рассрочка"},
-    {"role": "assistant", "content": "Да, рассрочка на 23 месяца"}
+    {"role": "assistant", "content": "Да, рассрочка на 22 месяца"}
   ]
 }
 ```
