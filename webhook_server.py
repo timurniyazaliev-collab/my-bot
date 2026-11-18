@@ -268,16 +268,11 @@ def lead_reply():
     save_history(conversation_id, history[-30:])
     log_unknown_questions(conversation_id, unknown_notes)
     if escalation_card is not None:
+        # Только фиксируем в базе (для разбора диалогов и статистики) — в
+        # Telegram владельцу больше не шлём, это оказалось слишком шумно
+        # (десятки/сотни эскалаций в день). CRM и так узнаёт об этом из
+        # поля "escalate" в ответе ниже и сама решает, что с этим делать.
         review_store.log_escalation(conversation_id)
-        channel_label = f" · канал: {channel}" if channel else ""
-        notify_text = (
-            f"🔔 Лид готов к передаче менеджеру (CRM, диалог: {conversation_id}{channel_label})\n\n"
-            f"{escalation_card}"
-        )
-        try:
-            review_store.send_to_owner(notify_text, None)
-        except Exception:
-            log.exception("failed to notify owner about CRM escalation for conversation_id=%s", conversation_id)
 
     return jsonify(
         {
