@@ -63,15 +63,24 @@ with sqlite3.connect(DB_PATH) as _conn:
         "CREATE TABLE IF NOT EXISTS stale_notified "
         "(conversation_id TEXT PRIMARY KEY, notified_at INTEGER NOT NULL)"
     )
+    try:
+        _conn.execute("ALTER TABLE stale_notified ADD COLUMN digested_at INTEGER")
+    except sqlite3.OperationalError:
+        pass
+    _conn.execute(
+        "CREATE TABLE IF NOT EXISTS stale_digest_sent (day TEXT PRIMARY KEY, sent_at INTEGER NOT NULL)"
+    )
 
 review_store.init_db()
 
 # Если лид молчит столько дней подряд, а бот ещё сам ведёт диалог (не
-# передан менеджеру) — раз в STALE_CHECK_INTERVAL_SECONDS проверяем и
-# шлём владельцу уведомление в Telegram (написать лиду первым бот не
-# может — нет исходящего API через CRM, см. CRM_INTEGRATION.md).
+# передан менеджеру) — раз в STALE_CHECK_INTERVAL_SECONDS помечаем это,
+# а раз в день (около STALE_DIGEST_HOUR_BISHKEK по Бишкеку) шлём
+# владельцу одну сводку по всем таким лидам (написать лиду первым бот
+# не может — нет исходящего API через CRM, см. CRM_INTEGRATION.md).
 STALE_LEAD_DAYS = 5
 STALE_CHECK_INTERVAL_SECONDS = 3600
+STALE_DIGEST_HOUR_BISHKEK = 9
 
 
 def load_history(conversation_id: str) -> list[dict]:
@@ -124,47 +133,79 @@ def _last_user_message(messages: list[dict]) -> str:
 
 def check_stale_leads() -> None:
     """Лиды, по которым бот давно не получал сообщений и которые ещё не
-    передавались менеджеру — шлёт владельцу уведомление в Telegram один
-    раз на каждый период молчания (см. save_history про сброс флага)."""
+    передавались менеджеру — помечает их в stale_notified (без отправки
+    в Telegram, см. save_history про сброс флага). Доставка владельцу
+    идёт раз в день единой сводкой через send_stale_digest."""
     cutoff = int(time.time()) - STALE_LEAD_DAYS * 86400
     with sqlite3.connect(DB_PATH) as conn:
         rows = conn.execute(
-            "SELECT conversation_id, messages, updated_at FROM conversations "
+            "SELECT conversation_id FROM conversations "
             "WHERE updated_at IS NOT NULL AND updated_at < ? "
             "AND conversation_id NOT IN (SELECT conversation_id FROM escalations) "
             "AND conversation_id NOT IN (SELECT conversation_id FROM stale_notified)",
             (cutoff,),
         ).fetchall()
-
-    for conversation_id, messages_json, updated_at in rows:
-        with sqlite3.connect(DB_PATH) as conn:
-            cur = conn.execute(
+        for (conversation_id,) in rows:
+            conn.execute(
                 "INSERT OR IGNORE INTO stale_notified (conversation_id, notified_at) VALUES (?, ?)",
                 (conversation_id, int(time.time())),
             )
-            claimed = cur.rowcount == 1
-        if not claimed:
-            continue  # другой процесс/поток уже отправил уведомление по этому диалогу
 
-        days_silent = (int(time.time()) - updated_at) // 86400
-        last_message = _last_user_message(json.loads(messages_json))
-        text = (
-            f"⏳ Лид молчит уже {days_silent} дн. (диалог в CRM: {conversation_id}).\n"
-            "Бот ещё сам ведёт диалог, менеджеру не передавался.\n"
+
+def send_stale_digest() -> None:
+    """Раз в день, около STALE_DIGEST_HOUR_BISHKEK по Бишкеку, шлёт
+    владельцу одной сводкой все диалоги, которые check_stale_leads
+    пометил и которые ещё не попали в предыдущую сводку."""
+    now_bishkek = datetime.datetime.now(review_store.BISHKEK_TZ)
+    if now_bishkek.hour != STALE_DIGEST_HOUR_BISHKEK:
+        return
+    today = now_bishkek.date().isoformat()
+    with sqlite3.connect(DB_PATH) as conn:
+        cur = conn.execute(
+            "INSERT OR IGNORE INTO stale_digest_sent (day, sent_at) VALUES (?, ?)",
+            (today, int(time.time())),
         )
+        if cur.rowcount == 0:
+            return  # сводку за сегодня уже отправляли
+        rows = conn.execute(
+            "SELECT sn.conversation_id, c.messages, c.updated_at FROM stale_notified sn "
+            "JOIN conversations c ON c.conversation_id = sn.conversation_id "
+            "WHERE sn.digested_at IS NULL"
+        ).fetchall()
+        if rows:
+            now = int(time.time())
+            conn.executemany(
+                "UPDATE stale_notified SET digested_at = ? WHERE conversation_id = ?",
+                [(now, conversation_id) for conversation_id, _, _ in rows],
+            )
+    if not rows:
+        return
+
+    now = int(time.time())
+    lines = []
+    for conversation_id, messages_json, updated_at in rows:
+        days_silent = (now - updated_at) // 86400
+        last_message = _last_user_message(json.loads(messages_json))
+        line = f"— {conversation_id} (молчит {days_silent} дн.)"
         if last_message:
-            text += f"Последнее сообщение клиента: «{last_message}»\n"
-        text += "Бот не может написать первым через CRM — если ещё актуально, напиши сам."
-        try:
-            review_store.send_to_owner(text, None)
-        except Exception:
-            log.exception("failed to notify owner about stale lead %s", conversation_id)
+            line += f': «{last_message}»'
+        lines.append(line)
+
+    text = (
+        f"⏳ Сводка за день: {len(rows)} лид(ов) молчат {STALE_LEAD_DAYS}+ дней, "
+        "бот ещё ведёт сам, менеджеру не передавались:\n\n" + "\n".join(lines)
+    )
+    try:
+        review_store.send_to_owner(text, None)
+    except Exception:
+        log.exception("failed to send stale leads digest")
 
 
 def _stale_lead_loop() -> None:
     while True:
         try:
             check_stale_leads()
+            send_stale_digest()
         except Exception:
             log.exception("stale lead check failed")
         time.sleep(STALE_CHECK_INTERVAL_SECONDS)
